@@ -711,7 +711,7 @@ static EXCLUSIONS: ExclusionTable = ExclusionTable::new();
 ///
 /// The exclusion table is read-only after start-up, because writing it from a
 /// callback would need a lock on the decision path.
-const BUILT_IN_EXCLUSIONS: [&str; 4] = av_driver_proto::exclusions::BUILT_IN;
+const BUILT_IN_EXCLUSIONS: [&str; 8] = av_driver_proto::exclusions::BUILT_IN;
 
 // ---------------------------------------------------------------------------
 // DriverEntry

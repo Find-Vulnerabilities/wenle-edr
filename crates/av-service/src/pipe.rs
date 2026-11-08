@@ -143,7 +143,7 @@ const CONNECT_TIMEOUT_MS: u32 = 5_000;
 /// `the_list_names_no_account_that_should_not_be_on_it` holds that to the
 /// source text — and `PIPE_REJECT_REMOTE_CLIENTS` keeps the channel off the
 /// network.
-pub const CONTROL_PIPE_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)";
+pub const CONTROL_PIPE_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;IU)";
 
 /// What the control pipe's permission list was asked to be, and what the object
 /// says it is.

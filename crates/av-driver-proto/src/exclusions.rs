@@ -148,8 +148,19 @@ pub const MAX_EXCLUSIONS: usize = 64;
 /// device to answer `IRP_MJ_DEVICE_CONTROL`, which it does not do yet: the
 /// `IOCTL_SET_EXCLUSIONS` code and its 33 KB buffer are defined and tested, and
 /// nothing on the kernel side reads them.
-pub const BUILT_IN: [&str; 4] = [
-    r"C:\Windows",
+pub const BUILT_IN: [&str; 8] = [
+    // The system directories themselves. `C:\Windows` used to be here as one
+    // entry, and an entry is a prefix, so it also covered `C:\Windows\Temp` and
+    // `C:\Windows\Tasks` -- both writable by an ordinary user, and therefore two
+    // places to put a program and have the gate never ask about it. Measured on
+    // 2026-11-08: a copy of `whoami.exe` in `C:\Windows\Temp` ran while the
+    // product said it was watching. The list now names the directories whose
+    // contents a user cannot write.
+    r"C:\Windows\System32",
+    r"C:\Windows\SysWOW64",
+    r"C:\Windows\WinSxS",
+    r"C:\Windows\Servicing",
+    r"C:\Windows\Microsoft.NET",
     r"C:\Program Files",
     r"C:\Program Files (x86)",
     r"C:\ProgramData\WenleAV",

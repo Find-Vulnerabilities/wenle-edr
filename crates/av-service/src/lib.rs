@@ -162,7 +162,6 @@ pub mod scm;
 pub mod selfprotect;
 pub mod single;
 pub mod tamper;
-pub mod verdict_cache;
 pub mod terminate;
 pub mod win32;
 

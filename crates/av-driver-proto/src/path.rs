@@ -212,7 +212,12 @@ pub fn device_to_dos_path<'o>(
         if rest.is_empty() {
             return Err(PathError::Malformed);
         }
-        return copy_into(rest, out);
+        if out.len() < rest.len() {
+            return Err(PathError::OutputTooSmall { needed: rest.len() });
+        }
+        out[..rest.len()].copy_from_slice(rest);
+        let kept = strip_component_tails(&mut out[..rest.len()])?;
+        return Ok(&out[..kept]);
     }
 
     if !starts_with_ignore_ascii_case(device_path, DEVICE_PREFIX) {
@@ -266,7 +271,54 @@ pub fn device_to_dos_path<'o>(
     }
     out[..dos.len()].copy_from_slice(dos);
     out[dos.len()..needed].copy_from_slice(remainder);
-    Ok(&out[..needed])
+    let kept = strip_component_tails(&mut out[..needed])?;
+    Ok(&out[..kept])
+}
+
+/// Drop trailing dots and spaces from every component, in place, and say how
+/// many units are left.
+///
+/// Win32 strips them before the loader resolves a name: `p.exe.`, `p.exe ` and
+/// `p.exe...` all name `p.exe`, and the image section that gets mapped is the
+/// one named `p.exe`. A gate that asked the service about the spelling it was
+/// handed would have the service scan a file that does not exist -- or, worse,
+/// a different file that does -- while the loader mapped the real one. Measured
+/// as a finding on 2026-11-08.
+///
+/// A component that is nothing but dots and spaces is not a name at all, and is
+/// reported as malformed rather than silently dropped.
+fn strip_component_tails(path: &mut [u16]) -> Result<usize, PathError> {
+    let len = path.len();
+    let mut read = 0;
+    let mut write = 0;
+    while read < len {
+        let end = path[read..len]
+            .iter()
+            .position(|&c| c == u16::from(b'\\'))
+            .map(|i| i + read)
+            .unwrap_or(len);
+        let mut tail = end;
+        while tail > read && (path[tail - 1] == u16::from(b'.') || path[tail - 1] == u16::from(b' ')) {
+            tail -= 1;
+        }
+        // A component that was empty to begin with is a doubled separator, and
+        // the volume table is allowed to hand one over; a component that had
+        // content and became empty once its dots and spaces were taken off was
+        // never a name.
+        if end > read && tail == read {
+            return Err(PathError::Malformed);
+        }
+        for index in read..tail {
+            path[write] = path[index];
+            write += 1;
+        }
+        if end < len {
+            path[write] = u16::from(b'\\');
+            write += 1;
+        }
+        read = end + 1;
+    }
+    Ok(write)
 }
 
 /// Copy `src` into `out`, or report how much room it needed.
@@ -626,8 +678,11 @@ mod tests {
             r"C:\a.b.c\x"
         );
         assert_eq!(
-            convert(r"\Device\HarddiskVolume3\...\x").unwrap(),
-            r"C:\...\x"
+            convert(r"\Device\HarddiskVolume3\...\x").is_err(),
+            true,
+            "a component of nothing but dots is not a name: Win32 strips the \
+             dots and the loader would map whatever is left, which is a \
+             different file from the one this would have asked about"
         );
     }
 

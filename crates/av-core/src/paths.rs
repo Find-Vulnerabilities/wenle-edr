@@ -126,6 +126,18 @@ impl AvPaths {
     /// write here. Callers pass through an allowance for their own process.
     pub fn is_protected(&self, path: &Path) -> bool {
         let candidate = normalize_for_compare(path);
+        // The log directory is deliberately writable by every user (support
+        // logs have to be appendable without elevation), and a directory that
+        // any user can write is a directory any user can put a program in. It
+        // is inside the data root, so the check below would otherwise call a
+        // payload dropped there one of our own files and let it run unscanned.
+        // Measured as a finding on 2026-11-08; see the audit note in
+        // `av_service::filter_port`.
+        let logs = normalize_for_compare(&self.log_dir);
+        if candidate == logs || candidate.strip_prefix(&logs).is_some_and(|rest| rest.starts_with('\\'))
+        {
+            return false;
+        }
         [&self.install_dir, &self.data_dir].iter().any(|root| {
             let root = normalize_for_compare(root);
             candidate == root
