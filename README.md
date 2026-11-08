@@ -47,7 +47,7 @@ and a process that allocated less look identical in Task Manager.
 | | |
 |---|---|
 | idle working set, after Windows trims it | 80–150 MB |
-| private bytes while idle | about 250 MB |
+| private bytes while idle | about 290 MB |
 | CPU, ordinary use | 1–5 % of one core |
 | CPU, scanning bursts | up to two cores |
 | the first minutes after boot | up to 1.3 GB working set while the scan queue drains, trimmed back by Windows |
@@ -56,9 +56,13 @@ and a process that allocated less look identical in Task Manager.
 
 What moves these numbers: how many directories are watched (five on the guest,
 twenty on the host), whether a scan is running, and how much of the database the
-OS keeps resident. A 120-minute soak in the guest under file, process and
-registry load has not shown growth in either private bytes or handles, and no
-bugcheck. The numbers are a snapshot of two machines, not a promise.
+OS keeps resident.
+
+A 120-minute soak in the guest under file, process and registry load, 110
+samples: private bytes +19.6 KB/hour (from 292,576 KB to 292,616 KB), handles
+-0.04/hour, nonpaged pool +523 KB/hour, and no bugcheck. The instability
+thresholds the run uses are 1024 KB/hour and one handle per hour, so it passes by
+a wide margin, and the nonpaged slope is the one to keep an eye on.
 
 ## What it does not do
 
