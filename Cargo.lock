@@ -735,6 +735,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "av-quickscan"
+version = "2.3.0"
+dependencies = [
+ "av-core",
+ "av-rules",
+ "av-scan",
+]
+
+[[package]]
 name = "av-realtime"
 version = "2.3.0"
 dependencies = [

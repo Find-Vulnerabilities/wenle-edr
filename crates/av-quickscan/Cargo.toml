@@ -1,0 +1,18 @@
+[package]
+name = "av-quickscan"
+description = "A scanner a caller can run without elevation: one path in, one verdict and one exit code out."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "wenle-scan"
+path = "src/main.rs"
+
+[dependencies]
+av-core.workspace = true
+av-rules.workspace = true
+av-scan.workspace = true
