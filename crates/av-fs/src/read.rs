@@ -163,14 +163,16 @@ impl Reader {
 
     /// How many times an open is attempted when the file is in use.
     ///
-    /// Three, with 25 ms and then 50 ms between them. The case this exists for
-    /// is a file being written at the moment the realtime watcher notices it:
-    /// the writer holds it without sharing for a few milliseconds, and a single
-    /// attempt would report a file that is perfectly readable a moment later as
-    /// unreadable. The case it deliberately does not chase is a file held open
-    /// for the lifetime of a process, where 75 ms of waiting buys nothing and
-    /// three attempts keeps the cost of finding that out bounded.
-    pub const DEFAULT_ATTEMPTS: u32 = 3;
+    /// Two: the first attempt, then one retry after 25 ms. The case this exists
+    /// for is a file being written at the moment the realtime watcher notices
+    /// it: the writer holds it without sharing for a few milliseconds, and a
+    /// single attempt would report a file that is perfectly readable a moment
+    /// later as unreadable. The case it deliberately does not chase is a file
+    /// held open for the lifetime of a process -- a running image, measured in
+    /// the guest on 2026-11-08 -- where waiting buys nothing and a third attempt
+    /// only adds time to a gate decision the driver has already stopped waiting
+    /// for.
+    pub const DEFAULT_ATTEMPTS: u32 = 2;
 
     /// How long to wait before the second attempt, doubling for each one after.
     const RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(25);
@@ -1291,7 +1293,7 @@ mod tests {
     #[test]
     fn the_default_ceiling_is_the_documented_one() {
         assert_eq!(Reader::DEFAULT_CEILING, 4 * 1024 * 1024 * 1024);
-        assert_eq!(Reader::DEFAULT_ATTEMPTS, 3);
+        assert_eq!(Reader::DEFAULT_ATTEMPTS, 2);
         let ordinary = Reader::ordinary();
         assert_eq!(ordinary.ceiling(), Reader::DEFAULT_CEILING);
         assert_eq!(ordinary.with_ceiling(1024).ceiling(), 1024);

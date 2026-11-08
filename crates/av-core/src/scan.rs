@@ -228,7 +228,17 @@ impl ScanOptions {
             heuristics: false,
             archives: false,
             memory: false,
-            per_file_timeout: Some(Duration::from_secs(5)),
+            // A gate decision is a program waiting to start. With the defaults a
+            // file of 200 MB may spend the twenty-odd seconds its size
+            // justifies, while the driver stops waiting at 3.5 s -- measured in
+            // the guest on 2026-11-08: four launches of a 219 MB copy cost about
+            // fourteen seconds of service CPU each, for a verdict nobody was
+            // waiting for. Thirty-two megabytes is far more than any image a
+            // person runs, and this is a ceiling on *work at the gate*, not on
+            // what the product will look at: `wenle scan` still reads the whole
+            // file.
+            max_file_size: Some(32 * 1024 * 1024),
+            per_file_timeout: Some(Duration::from_secs(2)),
             ..Default::default()
         }
     }
@@ -491,7 +501,12 @@ mod tests {
         assert!(!o.archives);
         assert!(!o.heuristics);
         assert!(!o.memory);
-        assert_eq!(o.per_file_timeout, Some(Duration::from_secs(5)));
+        // The gate is a program waiting to start. Measured in the guest on
+        // 2026-11-08: a 219 MB image cost fourteen seconds of service CPU per
+        // launch under the old budget, for a verdict the driver had stopped
+        // waiting for. Both caps are part of the contract now.
+        assert_eq!(o.per_file_timeout, Some(Duration::from_secs(2)));
+        assert_eq!(o.max_file_size, Some(32 * 1024 * 1024));
     }
 
     #[test]
