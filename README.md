@@ -39,20 +39,26 @@ and the process was stopped in the same second the first of them arrived.
 
 ## What it costs
 
-Measured on the development machine: 16 GB, Windows 11, driver loaded, Defender
-real-time switched off.
+Measured on the test machines: a 16 GB Windows 11 host and a Windows 11 guest,
+driver loaded, Defender real-time switched off. Two memory numbers are given
+because they are two different facts, and a working set that Windows has trimmed
+and a process that allocated less look identical in Task Manager.
 
 | | |
 |---|---|
-| idle, an hour after boot | 150 MB private, about 30 threads, 0–2 % of one core |
-| the first minutes after boot | up to 1.3 GB while the scan queue drains; Windows trims it back |
-| scanning bursts | up to two cores |
+| idle working set, after Windows trims it | 80–150 MB |
+| private bytes while idle | about 250 MB |
+| CPU, ordinary use | 1–5 % of one core |
+| CPU, scanning bursts | up to two cores |
+| the first minutes after boot | up to 1.3 GB working set while the scan queue drains, trimmed back by Windows |
 | one 5 MB DLL through the section gate | 3.5 s and often longer; the driver stops waiting and allows the section |
-| the rule database | 10,764 rules, 7,518 digests, 25 MB on disk, about 470 MB resident |
+| the rule database | 10,764 rules, 7,518 digests, 25 MB on disk, mapped rather than copied |
 
-A 120-minute soak in a guest under file, process and registry load: no
-bugcheck, private bytes −432 KB/hour, handles −0.36/hour. The numbers are a
-snapshot of one machine, not a promise.
+What moves these numbers: how many directories are watched (five on the guest,
+twenty on the host), whether a scan is running, and how much of the database the
+OS keeps resident. A 120-minute soak in the guest under file, process and
+registry load has not shown growth in either private bytes or handles, and no
+bugcheck. The numbers are a snapshot of two machines, not a promise.
 
 ## What it does not do
 
