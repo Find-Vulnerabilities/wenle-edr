@@ -284,6 +284,20 @@ fn run_service() -> Result<u8, ServiceError> {
     // host starts feeding it anything.
     logging::set_level(loaded.config.logging.level);
     announce(&loaded);
+    // The registration this service runs under is never re-read: an
+    // administrator can turn its start type off, or remove its recovery, while it
+    // runs, and the product would say nothing. Reading it once at start-up and
+    // saying so is the difference between a silent degradation and a line in the
+    // log; acting on it belongs to `wenle protect apply`, which an administrator
+    // runs when they mean to.
+    match av_guard::service::integrity(crate::scm::SERVICE_NAME) {
+        Ok(integrity) if !integrity.is_hardened() => log::warn!(
+            "this service's own registration is not hardened: {}",
+            integrity.describe()
+        ),
+        Ok(_) => {}
+        Err(detail) => log::debug!("this service's registration could not be read back: {detail}"),
+    }
     sweep_set_aside(&paths);
 
     match scm::run(paths, loaded) {
@@ -311,6 +325,20 @@ fn run_console() -> Result<u8, ServiceError> {
     // host starts feeding it anything.
     logging::set_level(loaded.config.logging.level);
     announce(&loaded);
+    // The registration this service runs under is never re-read: an
+    // administrator can turn its start type off, or remove its recovery, while it
+    // runs, and the product would say nothing. Reading it once at start-up and
+    // saying so is the difference between a silent degradation and a line in the
+    // log; acting on it belongs to `wenle protect apply`, which an administrator
+    // runs when they mean to.
+    match av_guard::service::integrity(crate::scm::SERVICE_NAME) {
+        Ok(integrity) if !integrity.is_hardened() => log::warn!(
+            "this service's own registration is not hardened: {}",
+            integrity.describe()
+        ),
+        Ok(_) => {}
+        Err(detail) => log::debug!("this service's registration could not be read back: {detail}"),
+    }
     sweep_set_aside(&paths);
 
     let host = av_service::host::Host::open(paths, loaded)?;

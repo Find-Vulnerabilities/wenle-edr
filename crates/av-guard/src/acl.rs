@@ -757,17 +757,66 @@ fn set_dacl(
     // `built`, which is alive for the call and for nothing beyond it — the API
     // copies the DACL onto the object rather than retaining it. The owner, group
     // and SACL are `None`, which means "leave alone".
-    let status = unsafe {
+    // An object's owner can rewrite its DACL whether or not the DACL says so:
+    // Windows grants the owner READ_CONTROL and WRITE_DAC implicitly. A data
+    // directory owned by the account that first created it therefore undoes
+    // every DACL this function writes, and a standard user can hand themselves
+    // write access to the rule database. Taking the directory for the
+    // administrators is what makes the DACL below bind. Requires
+    // SeRestorePrivilege or SeTakeOwnershipPrivilege, both of which
+    // LocalSystem holds; a failure here is reported and the DACL is still
+    // applied, because a directory with the right DACL and the wrong owner is
+    // better than one with neither.
+    //
+    // Measured as a finding on 2026-11-08. The test machine already had the
+    // right owner, created by an elevated installer; this is for the machines
+    // where it did not.
+    let mut owner = windows::Win32::Security::PSID::default();
+    let sid_text = windows::core::w!("S-1-5-32-544");
+    // SAFETY: `sid_text` is NUL-terminated and static; `owner` is an
+    // out-parameter the API fills from the local heap on success.
+    let sid_ok = unsafe {
+        windows::Win32::Security::Authorization::ConvertStringSidToSidW(sid_text, &mut owner).is_ok()
+    };
+    let information = information | windows::Win32::Security::OWNER_SECURITY_INFORMATION;
+    // SAFETY: `wide` is NUL-terminated and outlives the call; `acl` points into
+    // `built`, which is alive for the call and for nothing beyond it -- the API
+    // copies the DACL onto the object rather than retaining it. `owner` is a
+    // local-heap SID, freed below.
+    // Best effort: a caller without SeRestorePrivilege (a test, or a user
+    // running `wenle protect apply` unelevated) cannot take the object, and the
+    // answer there must be "the DACL, then", not a refusal to protect anything.
+    let mut status = unsafe {
         windows::Win32::Security::Authorization::SetNamedSecurityInfoW(
             PCWSTR(wide.as_ptr()),
             SE_FILE_OBJECT,
             information,
-            None,
+            if sid_ok { Some(owner) } else { None },
             None,
             Some(acl),
             None,
         )
     };
+    if status != WIN32_ERROR(0) && sid_ok {
+        status = unsafe {
+            windows::Win32::Security::Authorization::SetNamedSecurityInfoW(
+                PCWSTR(wide.as_ptr()),
+                SE_FILE_OBJECT,
+                information & !windows::Win32::Security::OWNER_SECURITY_INFORMATION,
+                None,
+                None,
+                Some(acl),
+                None,
+            )
+        };
+    }
+    if sid_ok {
+        // SAFETY: `owner` came from `ConvertStringSidToSidW`, which allocates
+        // with `LocalAlloc`, and this is the matching release.
+        unsafe {
+            let _ = windows::Win32::Foundation::LocalFree(Some(windows::Win32::Foundation::HLOCAL(owner.0)));
+        }
+    }
     if status != WIN32_ERROR(0) {
         return Err(format!(
             "the operating system refused the permissions for {} (Win32 error {})",
