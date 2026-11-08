@@ -1,4 +1,4 @@
-//! The Wenle AV kernel-mode minifilter.
+﻿//! The Wenle AV kernel-mode minifilter.
 //!
 //! # What this crate is, and what it deliberately is not
 //!
@@ -3021,7 +3021,11 @@ unsafe fn decide(data: *mut FltCallbackData) -> Verdict {
     let mut dos = [0u16; MAX_PATH_UNITS];
     // SAFETY: `data` is the caller's contract, and `dos` is this frame's own
     // 2 KiB of kernel stack.
-    let Some(path) = (unsafe { named(data, &mut dos) }) else {
+    let named = unsafe { named(data, &mut dos) };
+    // The value is kept until the ask has finished: a path too long for the
+    // stack lives in pool that `named` owns, and dropping it before the send
+    // would hand the port a dangling slice.
+    let Some(path) = named.slice(&dos) else {
         // Every way of having no path to ask about has already counted itself.
         // Measured as a finding on 2026-11-08: a program could pick a name the
         // conversion refuses -- an over-long path, a component of dots and
@@ -3073,10 +3077,87 @@ unsafe fn decide(data: *mut FltCallbackData) -> Verdict {
 ///
 /// `data` must be the callback data of an operation being decided, called from
 /// that operation's pre-operation callback.
-unsafe fn named<'a>(
-    data: *mut FltCallbackData,
-    dos: &'a mut [u16; MAX_PATH_UNITS],
-) -> Option<&'a [u16]> {
+/// A DOS path that had to be allocated because it did not fit the stack.
+///
+/// `FltGetFileNameInformation` returns the whole name in a structure the filter
+/// manager allocated, so the length limit this driver used to hit was its own
+/// copy and not the API's. A path longer than the stack buffer was therefore
+/// allowed through without the service ever being asked -- measured as a finding
+/// on 2026-11-08. This is the block that makes those paths answerable, and it is
+/// freed by `Drop` on every return path.
+struct PoolPath {
+    base: *mut u16,
+    units: usize,
+}
+
+/// Four bytes, spelled the way kernel tags are: `'WlPy'`.
+const POOL_TAG: u32 = 0x7950_6C57;
+
+impl PoolPath {
+    /// `units` UTF-16 units of non-paged pool, or `None` when the pool is out.
+    ///
+    /// Non-paged rather than paged: the block is small, it is freed before the
+    /// callback returns, and `POOL_FLAG_NON_PAGED` is addressable at every IRQL
+    /// this driver can reach, which is one fewer thing to get wrong.
+    fn new(units: usize) -> Option<PoolPath> {
+        let bytes = units.checked_mul(core::mem::size_of::<u16>())?;
+        if bytes == 0 {
+            return None;
+        }
+        // SAFETY: `ExAllocatePool2` is the documented allocator; a null return is
+        // reported rather than dereferenced.
+        let base =
+            unsafe { flt::ExAllocatePool2(flt::POOL_FLAG_NON_PAGED, bytes, POOL_TAG) } as *mut u16;
+        if base.is_null() {
+            return None;
+        }
+        Some(PoolPath { base, units })
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [u16] {
+        // SAFETY: `base` came from `ExAllocatePool2` with room for `units` and is
+        // freed only in `Drop`, after this borrow has ended.
+        unsafe { core::slice::from_raw_parts_mut(self.base, self.units) }
+    }
+
+    fn as_slice(&self) -> &[u16] {
+        // SAFETY: as above.
+        unsafe { core::slice::from_raw_parts(self.base, self.units) }
+    }
+}
+
+impl Drop for PoolPath {
+    fn drop(&mut self) {
+        // SAFETY: `base` came from `ExAllocatePool2` with this tag, has not been
+        // freed, and `Drop` runs once.
+        unsafe { flt::ExFreePoolWithTag(self.base as *mut core::ffi::c_void, POOL_TAG) };
+    }
+}
+
+/// What [`named`] found: a path, in one of two places.
+enum Named {
+    /// The caller's stack buffer holds the path, `len` units of it.
+    Borrowed { len: usize },
+    /// The path did not fit the stack buffer and lives in a pool block this
+    /// value owns. Dropping it frees the block.
+    Pooled { path: PoolPath, len: usize },
+    /// An exclusion matched, the name could not be had, or the conversion
+    /// refused it. The counters have already been moved.
+    Nothing,
+}
+
+impl Named {
+    /// The path, for as long as this value and `dos` are both alive.
+    fn slice<'a>(&'a self, dos: &'a [u16]) -> Option<&'a [u16]> {
+        match self {
+            Named::Borrowed { len } => Some(&dos[..*len]),
+            Named::Pooled { path, len } => Some(&path.as_slice()[..*len]),
+            Named::Nothing => None,
+        }
+    }
+}
+
+unsafe fn named(data: *mut FltCallbackData, dos: &mut [u16; MAX_PATH_UNITS]) -> Named {
     let mut information: *mut FltFileNameInformation = core::ptr::null_mut();
     // SAFETY: `data` is the caller's contract. The options ask for the
     // normalised form in the device namespace, which is the form the protocol's
@@ -3097,29 +3178,69 @@ unsafe fn named<'a>(
         // only as allowed. That gap is recorded here rather than papered over
         // by incrementing a counter whose documented meaning is different.
         bump(C_ALLOWED);
-        return None;
+        return Named::Nothing;
     }
 
     // SAFETY: `information` is non-null and was just returned by a successful
     // `FltGetFileNameInformation`.
     let device = unsafe { (*information).name.as_units() };
-    let resolved = device_to_dos_path(device, &VOLUMES, dos);
+
+    // The ordinary path uses the caller's 2 KiB of stack. The length the filter
+    // manager returned is the whole truth -- the copy is what has a limit -- so
+    // a buffer that is too small is answered by allocating one that is not.
+    let mut pooled: Option<PoolPath> = None;
+    let resolved: Result<usize, av_driver_proto::path::PathError> =
+        match device_to_dos_path(device, &VOLUMES, dos) {
+            Ok(path) => Ok(path.len()),
+            Err(av_driver_proto::path::PathError::OutputTooSmall { needed }) => {
+                match PoolPath::new(needed) {
+                    Some(mut buffer) => {
+                        let retry = device_to_dos_path(device, &VOLUMES, buffer.as_mut_slice())
+                            .map(|path| path.len());
+                        pooled = Some(buffer);
+                        retry
+                    }
+                    // The pool refused. The drive stays usable, and the counter
+                    // below is how an operator learns it happened.
+                    None => Err(av_driver_proto::path::PathError::OutputTooSmall { needed }),
+                }
+            }
+            Err(other) => Err(other),
+        };
 
     // SAFETY: `information` came from `FltGetFileNameInformation`, is non-null,
-    // and has not been released on any path -- `device` borrowed it, and the
-    // path has been copied out of it by the line above.
+    // and has not been released on any path -- the device name has been copied
+    // into `dos` or into `pooled`, and neither borrow survives this line.
     unsafe { flt::FltReleaseFileNameInformation(information) };
 
     match resolved {
-        Ok(path) if !EXCLUSIONS.matches(path) => Some(path),
-        // `excluded` is a subset of `allowed`, not an alternative to it: the
-        // operation was allowed, and this is why. An operator who adds the two
-        // counters together has misread them, which is why the protocol's
-        // documentation for `allowed` says it is large by design.
-        Ok(_) => {
-            bump(C_EXCLUDED);
+        Ok(len) => {
+            let excluded = match &pooled {
+                Some(buffer) => EXCLUSIONS.matches(&buffer.as_slice()[..len]),
+                None => EXCLUSIONS.matches(&dos[..len]),
+            };
+            // `excluded` is a subset of `allowed`, not an alternative to it: the
+            // operation was allowed, and this is why. An operator who adds the
+            // two counters together has misread them, which is why the
+            // protocol's documentation for `allowed` says it is large by
+            // design.
+            if excluded {
+                bump(C_EXCLUDED);
+                bump(C_ALLOWED);
+                return Named::Nothing;
+            }
+            match pooled {
+                Some(path) => Named::Pooled { path, len },
+                None => Named::Borrowed { len },
+            }
+        }
+        // A path longer than the pool would hold one: counted, and allowed. The
+        // pool block is dropped with `pooled` here, which is the whole of the
+        // release story.
+        Err(av_driver_proto::path::PathError::OutputTooSmall { .. }) => {
+            bump(C_OVERSIZE_PATH);
             bump(C_ALLOWED);
-            None
+            Named::Nothing
         }
         // A volume with no DOS name is a path the service cannot match against
         // a rule that names a drive letter. Sending it anyway would produce a
@@ -3128,7 +3249,7 @@ unsafe fn named<'a>(
         Err(_) => {
             bump(C_UNRESOLVED_VOLUME);
             bump(C_ALLOWED);
-            None
+            Named::Nothing
         }
     }
 }
