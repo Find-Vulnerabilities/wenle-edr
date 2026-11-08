@@ -253,6 +253,16 @@ mod tests {
     #[test]
     fn escaped_path_is_normalized() {
         let p = AvPaths::with_data_dir(r"C:\Program Files\WenleAV", r"C:\ProgramData\WenleAV");
-        assert!(p.is_protected(Path::new(r"\\?\C:\ProgramData\WenleAV\logs\a.log")));
+        // The verbatim prefix is normalised before the comparison, so this is
+        // still inside the tree we protect.
+        assert!(p.is_protected(Path::new(r"\\?\C:\ProgramData\WenleAV\db\rules.avdb")));
+        // The log directory is inside the tree and is deliberately *not*
+        // protected: every user may write there, and a directory every user may
+        // write is a directory every user may put a program in. A path in it
+        // that is treated as ours is a path that runs unscanned.
+        assert!(!p.is_protected(Path::new(r"\\?\C:\ProgramData\WenleAV\logs\a.log")));
+        assert!(!p.is_protected(Path::new(r"C:\ProgramData\WenleAV\logs\payload.exe")));
+        // The parent itself is still ours.
+        assert!(p.is_protected(Path::new(r"C:\ProgramData\WenleAV")));
     }
 }
