@@ -711,7 +711,7 @@ static EXCLUSIONS: ExclusionTable = ExclusionTable::new();
 ///
 /// The exclusion table is read-only after start-up, because writing it from a
 /// callback would need a lock on the decision path.
-const BUILT_IN_EXCLUSIONS: [&str; 8] = av_driver_proto::exclusions::BUILT_IN;
+const BUILT_IN_EXCLUSIONS: [&str; 7] = av_driver_proto::exclusions::BUILT_IN;
 
 // ---------------------------------------------------------------------------
 // DriverEntry
@@ -2059,6 +2059,15 @@ unsafe extern "system" fn section_pre_operation(
             FLT_PREOP_COMPLETE
         }
         Verdict::Allow | Verdict::Unresolved => FLT_PREOP_SUCCESS_NO_CALLBACK,
+        Verdict::UnresolvedName => {
+            // A name the driver could not turn into a DOS path. The service was
+            // never asked, so no verdict exists, and the only two answers are
+            // "run a file nobody looked at" and "refuse to run a file nobody
+            // could name". The second is the one a security product gives.
+            bump(C_IMAGES_BLOCKED);
+            unsafe { refuse(data, STATUS_INSUFFICIENT_RESOURCES) };
+            FLT_PREOP_COMPLETE
+        }
     }
 }
 
@@ -2953,6 +2962,17 @@ enum Verdict {
     /// and counted separately so that a volume this driver cannot name is
     /// visible rather than invisible.
     Unresolved,
+    /// The gate had a path it could not turn into a DOS name: a volume with no
+    /// drive letter, a name longer than the protocol's buffer, a component that
+    /// is nothing but dots and spaces. See [`decide`].
+    ///
+    /// Separate from [`Verdict::Unresolved`] because the two mean different
+    /// things. `Unresolved` is "this driver could not ask" -- a paging-I/O
+    /// section at `DISPATCH_LEVEL`, or an excluded tree -- and failing open
+    /// there is a gap in what the driver sees. This one is "there is a name and
+    /// it is not one this driver can reason about", which a user-mode program
+    /// chooses. Failing open on that is a bypass.
+    UnresolvedName,
 }
 
 /// Resolve the path, consult the exclusions, ask the service, apply the answer.
@@ -2999,9 +3019,12 @@ unsafe fn decide(data: *mut FltCallbackData) -> Verdict {
     // 2 KiB of kernel stack.
     let Some(path) = (unsafe { named(data, &mut dos) }) else {
         // Every way of having no path to ask about has already counted itself.
-        // There is no verdict to apply, and `Unresolved` is what the caller
-        // turns into "let it continue".
-        return Verdict::Unresolved;
+        // Measured as a finding on 2026-11-08: a program could pick a name the
+        // conversion refuses -- an over-long path, a component of dots and
+        // spaces -- and the section was created without the service ever being
+        // asked. A name this driver cannot reason about is not one it should
+        // run, so this is its own verdict and the section gate refuses it.
+        return Verdict::UnresolvedName;
     };
 
     if ask_service(path) {

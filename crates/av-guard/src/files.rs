@@ -345,12 +345,18 @@ impl DirRole {
                     "(A;OICI;", sddl_read_execute!(), ";;;BU)"
                 )
             }
-            // The one write grant, justified in the module documentation.
+            // Append and read, not modify. The module documentation asks for
+            // logs a support call can collect without elevation, and append is
+            // what that needs. `sddl_modify!()` also granted DELETE and
+            // FILE_WRITE_DATA, so any user could erase or rewrite the service's
+            // own log -- measured as a finding on 2026-11-08. The mask is
+            // FILE_READ_DATA (0x1) | FILE_APPEND_DATA (0x4) |
+            // FILE_READ_ATTRIBUTES (0x80) | SYNCHRONIZE (0x100000).
             DirRole::Log => {
                 concat!(
                     "D:P(A;OICI;", sddl_full!(), ";;;SY)",
                     "(A;OICI;", sddl_full!(), ";;;BA)",
-                    "(A;OICI;", sddl_modify!(), ";;;BU)"
+                    "(A;OICI;0x100085;;;BU)"
                 )
             }
             // Read only, and the module documentation says why the brief's
@@ -1932,7 +1938,14 @@ mod tests {
         // configuration a user can write is a way to switch the product off.
         assert!(DirRole::Log.users_may_write());
         assert!(!DirRole::Config.users_may_write());
-        assert!(DirRole::Log.sddl().contains("0x1301BF"), "{}", DirRole::Log.sddl());
+        // Append and read, not modify: `0x1301BF` also granted DELETE and
+        // FILE_WRITE_DATA, which is every user's licence to erase the log the
+        // service is writing.
+        assert!(
+            DirRole::Log.sddl().contains("0x100085"),
+            "{}",
+            DirRole::Log.sddl()
+        );
         assert!(
             DirRole::Config.sddl().contains("0x1200A9"),
             "{}",

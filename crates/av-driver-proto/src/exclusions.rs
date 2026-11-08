@@ -148,7 +148,7 @@ pub const MAX_EXCLUSIONS: usize = 64;
 /// device to answer `IRP_MJ_DEVICE_CONTROL`, which it does not do yet: the
 /// `IOCTL_SET_EXCLUSIONS` code and its 33 KB buffer are defined and tested, and
 /// nothing on the kernel side reads them.
-pub const BUILT_IN: [&str; 8] = [
+pub const BUILT_IN: [&str; 7] = [
     // The system directories themselves. `C:\Windows` used to be here as one
     // entry, and an entry is a prefix, so it also covered `C:\Windows\Temp` and
     // `C:\Windows\Tasks` -- both writable by an ordinary user, and therefore two
@@ -163,7 +163,15 @@ pub const BUILT_IN: [&str; 8] = [
     r"C:\Windows\Microsoft.NET",
     r"C:\Program Files",
     r"C:\Program Files (x86)",
-    r"C:\ProgramData\WenleAV",
+    // `C:\ProgramData\WenleAV` used to be here, and it is the data directory the
+    // service keeps its own logs, vault and database in. It is not excluded any
+    // more: the log directory inside it is writable by every user, and a driver
+    // exclusion is a prefix, so the whole product tree -- including a directory
+    // any user can put a program in -- was never asked about. Measured on
+    // 2026-11-08: a payload copied into the logs directory started with no
+    // decision in the log at all. Writes into the tree are still allowed to the
+    // product's own images by `caller_is_ours`, which is what the exclusion was
+    // standing in for.
 ];
 
 /// Longest exclusion entry, in UTF-16 code units.
