@@ -1272,7 +1272,11 @@ impl Dispatcher {
         // remembered.
         if let Ok(mut cache) = self.cache.lock() {
             if cache.is_known_clean(&path) {
-                log::trace!(
+                // Debug rather than trace on purpose: this is the line that says
+                // the cache did its job, and the verification run in a guest
+                // could not see the trace level. One line per launch of a file
+                // already known clean.
+                log::debug!(
                     "{} was found clean and has not changed; not scanned again",
                     path.display()
                 );
