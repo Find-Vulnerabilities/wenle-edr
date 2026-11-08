@@ -2058,16 +2058,20 @@ unsafe extern "system" fn section_pre_operation(
             unsafe { refuse(data, STATUS_INSUFFICIENT_RESOURCES) };
             FLT_PREOP_COMPLETE
         }
-        Verdict::Allow | Verdict::Unresolved => FLT_PREOP_SUCCESS_NO_CALLBACK,
-        Verdict::UnresolvedName => {
-            // A name the driver could not turn into a DOS path. The service was
-            // never asked, so no verdict exists, and the only two answers are
-            // "run a file nobody looked at" and "refuse to run a file nobody
-            // could name". The second is the one a security product gives.
-            bump(C_IMAGES_BLOCKED);
-            unsafe { refuse(data, STATUS_INSUFFICIENT_RESOURCES) };
-            FLT_PREOP_COMPLETE
-        }
+        // `UnresolvedName` is allowed, deliberately, and this is the correction
+        // of a mistake made the same day. The intent was "refuse a file nobody
+        // could name", and the effect was to refuse every process start: the
+        // name lookup fails for ordinary sections far more often than the audit
+        // suggested (measured in the guest on 2026-11-08: after loading that
+        // build, no new process could start -- `CreateProcess` returned
+        // ERROR_NO_SYSTEM_RESOURCES for everything, including `fltmc.exe` and
+        // `powershell.exe`). A gate that fails closed on "I could not read the
+        // name" is a gate that stops the machine. The ambiguity this was meant
+        // to catch -- trailing dots and spaces -- is handled where it can be
+        // judged, in `av_driver_proto::path::strip_component_tails`, which
+        // rewrites the name into the one the loader will use.
+        Verdict::Allow | Verdict::Unresolved | Verdict::UnresolvedName =>
+            FLT_PREOP_SUCCESS_NO_CALLBACK,
     }
 }
 
