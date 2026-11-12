@@ -237,7 +237,15 @@ impl ScanOptions {
             // person runs, and this is a ceiling on *work at the gate*, not on
             // what the product will look at: `wenle scan` still reads the whole
             // file.
-            max_file_size: Some(32 * 1024 * 1024),
+            // Eight, not thirty-two, and the measurement is why: with the
+            // full database a 22 MB native image took 5.8 s, so every one of
+            // them blew the driver's 3.5 s deadline and every program start
+            // waited for it. Eight megabytes is about two seconds on this
+            // machine, which leaves room for a queue behind it. Past the cap the
+            // gate scans the first eight megabytes and says so in the report
+            // (`scanned_bytes` against `size`); a full scan still reads all of
+            // it.
+            max_file_size: Some(8 * 1024 * 1024),
             per_file_timeout: Some(Duration::from_secs(2)),
             ..Default::default()
         }

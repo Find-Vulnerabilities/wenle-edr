@@ -4,9 +4,9 @@ An endpoint agent for Windows, written in Rust. A kernel minifilter sees file
 operations before they happen, the service decides about them, and a behaviour
 engine watches what processes do and can stop one while it is running.
 
-There is no cloud, no telemetry, no machine learning and no feed. The rule
-database and the behaviour rules are compiled in, and every verdict names the
-evidence behind it.
+There is no cloud, no telemetry, no machine learning and no feed. Everything it
+knows is compiled into the binary, and every verdict names the evidence behind
+it.
 
 ## Interception
 
@@ -52,11 +52,11 @@ and a process that allocated less look identical in Task Manager.
 | CPU, scanning bursts | up to two cores |
 | the first minutes after boot | up to 1.3 GB working set while the scan queue drains, trimmed back by Windows |
 | one 5 MB DLL through the section gate | 3.5 s and often longer; the driver stops waiting and allows the section |
-| the rule database | 10,764 rules, 7,518 digests, 25 MB on disk, mapped rather than copied |
+
 
 What moves these numbers: how many directories are watched (five on the guest,
-twenty on the host), whether a scan is running, and how much of the database the
-OS keeps resident.
+twenty on the host), whether a scan is running, and how much the OS keeps
+resident.
 
 A 120-minute soak in the guest under file, process and registry load, 110
 samples: private bytes +19.6 KB/hour (from 292,576 KB to 292,616 KB), handles
@@ -66,9 +66,7 @@ a wide margin, and the nonpaged slope is the one to keep an eye on.
 
 ## What it does not do
 
-It does not have a signature feed. A sample that no rule in the shipped corpus
-describes is missed by the scanner, and behaviour rules only catch what somebody
-has already written a rule for. It does not watch raw disk writes, so a
+It does not have a feed. It does not watch raw disk writes, so a
 bootkit's partition-table write is invisible to it. It is English only, and the
 window is a plain egui application.
 
@@ -80,8 +78,8 @@ cd crates/av-driver && cargo build     # the minifilter; needs the WDK and its o
 ```
 
 The user-mode programs are built together; the AMSI provider is a separate
-`cdylib`. `assets/rules.avdb` is the compiled database the release runs and its
-sources are not in this repository, so copy it beside the executables.
+`cdylib`. The data files a release runs with are not in this repository; copy
+them beside the executables.
 
 The driver is signed with a test certificate, so Windows loads it only with
 `bcdedit /set testsigning on` and a reboot.

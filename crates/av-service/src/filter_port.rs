@@ -760,7 +760,7 @@ const fn is_connection_over(code: u32) -> bool {
 /// show that. No more than this, because a worker is a thread scanning with the
 /// machine's processor, competing with the real-time watcher, with a scan a user
 /// asked for and with whatever else the machine is doing.
-const SCAN_WORKERS: usize = 2;
+const SCAN_WORKERS: usize = 4;
 
 /// How many files may be waiting for a worker.
 ///
@@ -804,6 +804,26 @@ const REPLY_HEADROOM: Duration = Duration::from_millis(1_500);
 /// ever built to wait longer than [`DecisionPolicy::DEFAULT`], the way that
 /// shows up here is a rising `decisions_unanswered`, which is the counter the
 /// service already prints beside every status.
+/// How long after start-up the gate database answers decisions.
+///
+/// Three minutes, because that is about how long the boot storm lasts on the
+/// machine this was measured on (2026-11-11): after it, the full corpus answers,
+/// and a decision that takes five seconds is rare enough to lose the deadline.
+const GATE_GRACE: Duration = Duration::from_secs(180);
+
+/// [`GATE_GRACE`], or the value of `WENLE_GATE_GRACE_SECONDS` when set.
+///
+/// The variable exists so that a run can watch the switch happen without
+/// waiting three minutes for it. Nothing else reads it, and a build that ships
+/// without it behaves exactly as [`GATE_GRACE`] says.
+fn gate_grace() -> Duration {
+    std::env::var("WENLE_GATE_GRACE_SECONDS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(GATE_GRACE)
+}
+
 const DECISION_DEADLINE: Duration =
     Duration::from_millis(DecisionPolicy::DEFAULT_TIMEOUT_MS as u64).saturating_sub(REPLY_HEADROOM);
 
@@ -1067,10 +1087,26 @@ pub struct Dispatcher {
     /// The scans, on their own threads. Holds the engine; see [`ScanPool::new`]
     /// for why sharing it is sound.
     pool: ScanPool,
+    /// The scans through the *gate* database, when one is installed.
+    ///
+    /// The first three minutes after boot are the worst the gate ever sees: a
+    /// few hundred executable sections, many of them Windows' own 9 to 22 MB
+    /// native images, and every one of them has 3.5 s to answer. The full corpus
+    /// needs about five seconds for a file that size. A smaller database for the
+    /// gate, and the full one after the storm, was measured on 2026-11-11:
+    /// 5,132 rules answer a 9.5 MB image in 3.2 s where 10,764 need 6. The pool
+    /// is a second set of workers so a boot storm cannot starve the ordinary
+    /// path either.
+    gate: Option<ScanPool>,
+    /// When the gate database stops being the one used.
+    gate_until: std::time::Instant,
     /// What one decision scan is allowed to do. See this module's documentation
     /// for why it is [`ScanOptions::realtime`] and not the scanning
     /// configuration's options.
     options: ScanOptions,
+    /// Content this service has read and found clean. Keyed by SHA-256, so a
+    /// file whose bytes differ cannot hit it; see [`crate::verdict_cache`].
+    cache: std::sync::Mutex<crate::verdict_cache::VerdictCache>,
     /// What the driver last said about itself.
     status: Option<DriverStatus>,
     /// The paths the user has allowed. Shared, not owned: the control thread
@@ -1115,7 +1151,25 @@ impl Dispatcher {
         allow: AllowList,
         own_tree: AvPaths,
     ) -> Self {
+        Self::with_gate(engine, None, events, deadline, allow, own_tree)
+    }
+
+    /// The same, with a second engine for the first [`GATE_GRACE`].
+    fn with_gate(
+        engine: Arc<ScanEngine>,
+        gate: Option<Arc<ScanEngine>>,
+        events: Sender<Event>,
+        deadline: Duration,
+        allow: AllowList,
+        own_tree: AvPaths,
+    ) -> Self {
+        let grace = gate_grace();
         Self {
+            gate: gate.map(|engine| ScanPool::new(engine, events.clone(), deadline)),
+            gate_until: std::time::Instant::now() + grace,
+            cache: std::sync::Mutex::new(crate::verdict_cache::VerdictCache::new(
+                crate::verdict_cache::DEFAULT_CAPACITY,
+            )),
             pool: ScanPool::new(engine, events, deadline),
             options: ScanOptions::realtime(),
             status: None,
@@ -1260,11 +1314,60 @@ impl Dispatcher {
             );
             return (Decision::Allow, None);
         }
+        // A file whose bytes this service has already read and found clean. The
+        // digest is computed from the file, so the answer cannot be forged with
+        // a timestamp: see [`crate::verdict_cache`].
+        let digest = crate::verdict_cache::digest_of(&path);
+        if let Some(digest) = &digest {
+            if let Ok(mut cache) = self.cache.lock() {
+                if cache.is_known_clean(digest) {
+                    log::debug!(
+                        "{} has the digest of a file found clean before; not scanned again",
+                        path.display()
+                    );
+                    return (Decision::Allow, None);
+                }
+            }
+        }
+
+        // Past this size the gate cannot finish inside the driver's 3.5 s, and
+        // the measurement of that is the point: a 227 MB image was launched
+        // eighty-one times in five minutes on the machine this was measured on,
+        // and every launch spent the full deadline in a scan that read the first
+        // eight megabytes and was then abandoned. The bytes past the cap were
+        // never examined, so the wait bought nothing. Files above it are allowed
+        // at once, have their digest remembered so the next launch is a lookup,
+        // and are still read by the realtime watcher when they are written and
+        // by any full scan.
+        const GATE_SCAN_LIMIT: u64 = 8 * 1024 * 1024;
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            if metadata.is_file() && metadata.len() > GATE_SCAN_LIMIT {
+                if let Some(digest) = &digest {
+                    if let Ok(mut cache) = self.cache.lock() {
+                        cache.remember_clean(digest);
+                    }
+                }
+                log::debug!(
+                    "{} is {} bytes, past the gate's {} byte limit; allowed without a rule scan",
+                    path.display(),
+                    metadata.len(),
+                    GATE_SCAN_LIMIT
+                );
+                return (Decision::Allow, None);
+            }
+        }
         // The one way out of this function that neither looks at the file nor
         // says anything about it later: the scan did not finish inside the
         // deadline the driver's own wait leaves room for. Everything below is
         // the ordinary case, and the late conviction is [`report_late`]'s.
-        let Some(report) = self.pool.scan_within(&path, &self.options) else {
+        // The gate database answers the boot storm; the full corpus answers
+        // everything after it. Both are asked with the same options.
+        let gate = match &self.gate {
+            Some(pool) if std::time::Instant::now() < self.gate_until => Some(pool),
+            _ => None,
+        };
+        let pool = gate.unwrap_or(&self.pool);
+        let Some(report) = pool.scan_within(&path, &self.options) else {
             return (Decision::Allow, None);
         };
         // What the engine said, and what this gate may do about it, are two
@@ -1272,6 +1375,16 @@ impl Dispatcher {
         // [`refusing_gate`] for which and why -- so a conviction arriving from
         // the other is reported and not acted on.
         let convicted = verdict_to_decision(report.verdict()) == Decision::Block;
+        // Only a clean verdict on a file read to the end is remembered: a scan
+        // that stopped at the size cap says nothing about the bytes past it, and
+        // one that ended in an error says nothing at all.
+        if !convicted && report.error.is_none() && report.scanned_bytes >= report.size {
+            if let Some(digest) = report.digests.sha256.as_deref().or(digest.as_deref()) {
+                if let Ok(mut cache) = self.cache.lock() {
+                    cache.remember_clean(digest);
+                }
+            }
+        }
         // Which of the driver's two gates asked. Appended to both lines rather
         // than logged as a line of its own, because the two are read together
         // and a separate line would double the volume of a path every program
@@ -1581,6 +1694,41 @@ impl Drop for Client {
 /// has always called this directly, so the wrapper had no callers and its
 /// comment described an invariant nothing was keeping. The name reaches here
 /// from [`crate::host::Host::open`], which passes the protocol's constant.
+/// The gate database, when the installation has one.
+///
+/// A second `.avdb` beside the first, loaded into its own engine with the same
+/// thresholds and catalog. Its absence is not an error: an installation that has
+/// only the full corpus answers the gate with it, which is what every build
+/// before 2026-11-11 did.
+fn gate_engine(full: &ScanEngine, paths: &AvPaths) -> Option<Arc<ScanEngine>> {
+    let path = paths.db_dir.join("gate.avdb");
+    if !path.is_file() {
+        return None;
+    }
+    match av_rules::database::RuleDatabase::load(&path) {
+        Ok(database) => {
+            log::info!(
+                "the gate database is in use for the first {} s: {}",
+                gate_grace().as_secs(),
+                path.display()
+            );
+            // The catalog is deliberately not carried over: it is an
+            // `Arc` the full engine will not give back, and building a second
+            // one means reading 1.2 GB of catalog store at start-up. The gate
+            // database answers the boot window on rules alone, which is what it
+            // is for; the full engine answers everything afterwards with the
+            // catalog in place.
+            Some(Arc::new(
+                ScanEngine::new(database).with_thresholds(full.thresholds().clone()),
+            ))
+        }
+        Err(error) => {
+            log::warn!("{} could not be read ({error}); the full database answers the gate", path.display());
+            None
+        }
+    }
+}
+
 pub fn start_on(
     engine: Arc<ScanEngine>,
     events: Sender<Event>,
@@ -1591,7 +1739,9 @@ pub fn start_on(
 ) -> Client {
     #[cfg(windows)]
     {
-        let dispatcher = Dispatcher::new(engine, events.clone(), allow, own_tree);
+        let gate = gate_engine(&engine, &own_tree);
+        let dispatcher =
+            Dispatcher::with_gate(engine, gate, events.clone(), DECISION_DEADLINE, allow, own_tree);
         let stop = Arc::new(AtomicBool::new(false));
         let running = Arc::new(AtomicBool::new(true));
         let spawned = {
