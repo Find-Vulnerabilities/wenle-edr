@@ -10,7 +10,6 @@
 # release ships. The rule sources themselves are not distributed here; see the
 # Licensing section of the README, and `rules/.gitkeep` for where they would go.
 *.avdb
-!assets/rules.avdb
 
 # A vendored `libclang` 17 for the driver's bindgen, which does not understand
 # the installed LLVM 22. 103 MB of somebody else's DLL, fetched by the command

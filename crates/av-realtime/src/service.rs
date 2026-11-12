@@ -995,8 +995,12 @@ mod tests {
         assert!(!options.recursive);
         assert!(!options.memory);
         // And the per-file budget is bounded, so one slow file cannot hold the
-        // single scanner thread for an unbounded time.
-        assert_eq!(options.per_file_timeout, Some(Duration::from_secs(5)));
+        // single scanner thread for an unbounded time. Two seconds and eight
+        // megabytes, since 2026-11-12: five seconds and thirty-two megabytes let
+        // a single large image hold the thread past the driver's own deadline
+        // while the gate waited for a verdict (see `ScanOptions::realtime`).
+        assert_eq!(options.per_file_timeout, Some(Duration::from_secs(2)));
+        assert_eq!(options.max_file_size, Some(8 * 1024 * 1024));
     }
 
     #[test]

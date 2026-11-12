@@ -23,16 +23,22 @@ The driver sits at altitude 321000. It can refuse five things:
 Everything else is reported and allowed. A gate that guesses is worse than a
 gate that says nothing.
 
-## What it compares against
+## Rules are not included
 
-10,764 static rules, compiled into one database. They are drawn from the
-**extended** tier of [YARA-Forge](https://github.com/YARAHQ/yara-forge), which
-collects rules from forty-odd security repositories and standardises their
-metadata.
+The product ships no static rules. Rules are other people's work under other
+people's licences, and this repository distributes code only.
 
-The collection is not under one licence. Each rule keeps the licence its upstream
-stated, those are not uniform, and some upstreams state none at all. The MIT grant
-on this repository covers the code and not the rules: see Licensing below.
+Two ways to give it rules:
+
+- **Your own.** `wenle build <file.yar>` compiles YARA sources (`.yar`, `.yara`)
+  or this product's `.avrule` syntax into the database the engine reads.
+  `wenle build --report` says which constructs were refused and why.
+- **YARA-Forge.** `tools/fetch-rules.ps1` downloads the tier you choose (core,
+  extended or full), compiles it, and puts the database where the service expects
+  it. Run it elevated, once, after installing.
+
+Without a database the engine still starts and finds nothing; `wenle service
+status` says so rather than calling every file clean.
 
 ## Behaviour
 
@@ -89,8 +95,8 @@ cd crates/av-driver && cargo build     # the minifilter; needs the WDK and its o
 ```
 
 The user-mode programs are built together; the AMSI provider is a separate
-`cdylib`. The data files a release runs with are not in this repository; copy
-them beside the executables.
+`cdylib`. No rule database is included; see Rules are not included above for the
+two ways to produce one.
 
 The driver is signed with a test certificate, so Windows loads it only with
 `bcdedit /set testsigning on` and a reboot.
@@ -122,12 +128,12 @@ HTTPS.
 
 ## Licensing
 
-The code is MIT (`LICENSE`). The rules are not.
+The code is MIT (`LICENSE`).
 
-The shipped database, `assets/rules.avdb`, is a compiled derivative of the
-extended tier of [YARA-Forge](https://github.com/YARAHQ/yara-forge), whose
-packaging tool is Apache-2.0. The rules inside it are not Apache-2.0 as a whole:
-YARA-Forge collects them from forty-odd upstream repositories, keeps each rule's
-own licence in the package headers, and those licences are not uniform — some
-upstreams state none. Nothing in the MIT grant on this repository extends to them,
-and where an upstream stated no licence, none is claimed here.
+No rules are distributed with it, so none is covered by that grant. `wenle build`
+compiles rule sources you supply. `tools/fetch-rules.ps1` downloads
+[YARA-Forge](https://github.com/YARAHQ/yara-forge) on your machine; its
+packaging tool is GPL-3.0 and the rules it collects come from forty-odd upstream
+repositories, each keeping its own licence — not uniform, and some state none.
+That script is a convenience for the person running it, not a redistribution by
+this project: whatever you compile from it is yours to keep and not to hand on.
