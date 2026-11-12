@@ -1,4 +1,4 @@
-﻿//! The Wenle AV kernel-mode minifilter.
+//! The Wenle AV kernel-mode minifilter.
 //!
 //! # What this crate is, and what it deliberately is not
 //!
@@ -4711,14 +4711,21 @@ extern "system" fn port_connect(
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     // The connection cookie is this driver's to define and the header makes it
-    // optional (`_Outptr_result_maybenull_`). Null is written into it rather
-    // than left alone because `port_disconnect`'s one argument is whatever is
-    // here, and an out-parameter the callee did not write is a value the
-    // teardown path would be reading on trust.
+    // optional (`_Outptr_result_maybenull_`). It is written because
+    // `port_disconnect`'s one argument is whatever is here, and an
+    // out-parameter the callee did not write is a value the teardown path would
+    // be reading on trust.
+    //
+    // What it holds is the connection's identity: the client port. That is what
+    // lets a teardown that belongs to an older connection leave the connection
+    // in hand alone. `fltmc unload` followed by `fltmc load` gives the service a
+    // new port while the old one is still being destroyed, and the old teardown
+    // used to arrive after the new `port_connect` and null it -- a service that
+    // reported itself connected while every decision was answered by nobody.
     if !connection_port_cookie.is_null() {
         // SAFETY: the parameter is `_Outptr_` and non-null, which was just
         // checked, so it addresses a slot this callback is the writer of.
-        unsafe { *connection_port_cookie = core::ptr::null_mut() };
+        unsafe { *connection_port_cookie = client_port };
     }
     // SAFETY: `client_port` is the connection the filter manager is handing
     // over and it is non-null, which was just checked. It is the port itself
@@ -4757,13 +4764,35 @@ extern "system" fn port_connect(
 }
 
 /// The service disconnected.
-extern "system" fn port_disconnect(_connection_context: *mut c_void) {
+extern "system" fn port_disconnect(connection_context: *mut c_void) {
     // Clearing this is what makes every subsequent decision a fail-open one.
     // That is the intended behaviour rather than a fallback: with nobody to
     // ask, the driver has no basis to refuse anything, and the alternative --
     // refusing on the grounds that the service is gone -- is a machine that
     // stops running its own programs because an antivirus service crashed.
-    CLIENT_PORT.store(core::ptr::null_mut(), Ordering::Release);
+    //
+    // Only the connection being torn down may clear the slot. A teardown for an
+    // older connection that arrives after a newer one has connected leaves the
+    // newer port in place; clearing it unconditionally is the bug that made a
+    // reloaded driver stop asking while a restarted service kept saying it was
+    // connected. A null context has nothing to compare and clears: that is the
+    // shape a connection made before this cookie existed would have, and a port
+    // that is gone must not stay in the slot.
+    let mut current = CLIENT_PORT.load(Ordering::Acquire);
+    loop {
+        if !connection_context.is_null() && current != connection_context {
+            return;
+        }
+        match CLIENT_PORT.compare_exchange(
+            current,
+            core::ptr::null_mut(),
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return,
+            Err(actual) => current = actual,
+        }
+    }
 }
 
 /// The service sent something unsolicited.

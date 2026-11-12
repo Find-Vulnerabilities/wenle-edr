@@ -946,6 +946,25 @@ impl CatalogIndex {
         Ok(index)
     }
 
+    /// The cached index, or `None` when there is none that can be believed.
+    ///
+    /// [`Self::from_directory_cached`] answers a stale cache by reading and
+    /// parsing every catalog in the store, which on the machine this was
+    /// measured on is 1.2 GB and about two minutes. That is the right answer for
+    /// a caller that needs the index now; it is the wrong answer for a service
+    /// that has to be running before the SCM gives up on it. This returns
+    /// `Ok(None)` instead, cheaply, and leaves the rebuild to the caller.
+    pub fn from_directory_if_cached(dir: &Path, cache: &Path) -> Result<Option<Self>, SignatureError> {
+        let (paths, state) = catalog_store(dir)?;
+        let Some(state) = state else {
+            return Ok(None);
+        };
+        match catalog_cache::load(cache, &state) {
+            Ok(loaded) => Ok(Some(Self::from_cache(paths, loaded))),
+            Err(_) => Ok(None),
+        }
+    }
+
     /// Build the index from catalogs already enumerated, in index order.
     ///
     /// Infallible where [`Self::from_directory`] is not: the enumeration is the

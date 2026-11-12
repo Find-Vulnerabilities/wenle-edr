@@ -306,11 +306,9 @@ fn catalog_from(
         return (None, CatalogStatus::default());
     };
     let started = std::time::Instant::now();
-    match av_signatures::catalog::CatalogIndex::from_directory_cached(
-        store,
-        &av_signatures::catalog::cache_path(cache_dir),
-    ) {
-        Ok(index) => {
+    let cache = av_signatures::catalog::cache_path(cache_dir);
+    match av_signatures::catalog::CatalogIndex::from_directory_if_cached(store, &cache) {
+        Ok(Some(index)) => {
             let status = CatalogStatus {
                 read: index.catalogs_read(),
                 refused: index.catalogs_refused(),
@@ -333,6 +331,36 @@ fn catalog_from(
                 },
             );
             (Some(Arc::new(index)), status)
+        }
+        // The cache is stale or absent. Rebuilding it here is what made a
+        // service start take two minutes after a Windows update, long enough
+        // that the SCM's own patience is a live question. This run starts
+        // without the catalog -- scans are correct, just slower on the files a
+        // catalog would have vouched for -- and the rebuild happens behind the
+        // port, for the next start.
+        Ok(None) => {
+            log::warn!(
+                "catalog index: no usable cache in {}; starting without it and rebuilding in \
+                 the background for the next start",
+                cache.display()
+            );
+            let store = store.to_path_buf();
+            let cache = cache.clone();
+            std::thread::Builder::new()
+                .name("wenle-catalog-rebuild".to_string())
+                .spawn(move || {
+                    let started = std::time::Instant::now();
+                    match av_signatures::catalog::CatalogIndex::from_directory_cached(&store, &cache) {
+                        Ok(index) => log::info!(
+                            "catalog index: rebuilt {} digests in {:?}; the next start uses it",
+                            index.digest_count(),
+                            started.elapsed()
+                        ),
+                        Err(error) => log::warn!("catalog index: the background rebuild failed: {error}"),
+                    }
+                })
+                .ok();
+            (None, CatalogStatus::default())
         }
         Err(_) => (None, CatalogStatus::default()),
     }
