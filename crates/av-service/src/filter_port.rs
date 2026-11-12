@@ -1414,7 +1414,36 @@ impl Dispatcher {
             0 => "an unidentified process".to_string(),
             pid => format!("process {pid}"),
         };
-        let decision = if convicted && refusing_gate(request.subject) {
+        // A refusal that makes a critical process fail to load a section is not
+        // a blocked file, it is a bugcheck: on 2026-11-12 a section refused
+        // while `svchost.exe` was loading took Windows down with
+        // `CRITICAL_PROCESS_DIED`. The rule that keeps both protections turns on
+        // where the file lives. Windows' own components live in directories a
+        // user cannot write; a DLL planted by a hijacked search path, a
+        // replaced service entry or a modified environment variable does not.
+        // So a critical process loading from a protected directory is allowed
+        // even when a rule matched -- the rules are ours, the file is not, and
+        // being wrong there must not cost the machine -- while a critical
+        // process loading from a writable directory is still refused, which is
+        // the attack the allowance would otherwise open.
+        let critical = convicted
+            && refusing_gate(request.subject)
+            && asking_process_image(request.process_id).is_some_and(|name| {
+                CRITICAL_PROCESSES
+                    .iter()
+                    .any(|critical| name.eq_ignore_ascii_case(critical))
+            });
+        let protected_placement = critical && !is_user_writable(&path);
+        if protected_placement {
+            log::warn!(
+                "{} matched a rule, but it is being loaded by a critical process from a directory \
+                 a user cannot write ({}); allowing it so the machine survives. This is a rule to \
+                 fix, not a file to quarantine",
+                path.display(),
+                asking_process_image(request.process_id).unwrap_or_default()
+            );
+        }
+        let decision = if convicted && refusing_gate(request.subject) && !protected_placement {
             Decision::Block
         } else {
             Decision::Allow
@@ -2203,6 +2232,88 @@ const INBOX_POLL: Duration = Duration::from_millis(50);
 /// both changes.
 const RECEIVE_THREADS: usize = 1;
 
+/// The name the driver registers its filter under, which is what `fltmc`
+/// prints and what the watchdog looks for when it asks whether the driver is
+/// still there.
+const FILTER_NAME: &str = "WenleAvFilter";
+
+/// The processes whose death takes Windows with it.
+///
+/// A refusal that makes one of these fail to load a section is not a blocked
+/// file, it is a bugcheck: on 2026-11-12 a section refused while `svchost.exe`
+/// was loading ended in `CRITICAL_PROCESS_DIED`.
+const CRITICAL_PROCESSES: [&str; 6] = [
+    "smss.exe",
+    "csrss.exe",
+    "wininit.exe",
+    "services.exe",
+    "lsass.exe",
+    "svchost.exe",
+];
+
+/// Whether this path is somewhere an unprivileged user can write.
+///
+/// The question behind it: a file a critical process loads from System32 or
+/// Program Files was put there by an installer; a file it loads from a profile,
+/// ProgramData or a temp directory can have been put there by anything that ran
+/// as the user, which is what a hijacked search path or a replaced service DLL
+/// looks like.
+fn is_user_writable(path: &std::path::Path) -> bool {
+    let Some(text) = path.to_str() else {
+        return true;
+    };
+    let lowered = text.to_ascii_lowercase();
+    [
+        "\\users\\",
+        "\\programdata\\",
+        "\\windows\\temp\\",
+        "\\windows\\tasks\\",
+        "$recycle.bin",
+        "\\appdata\\",
+    ]
+    .iter()
+    .any(|writable| lowered.contains(writable))
+}
+
+/// The file name of the process that asked, if Windows will say.
+#[cfg(windows)]
+fn asking_process_image(pid: u32) -> Option<String> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    if pid == 0 {
+        return None;
+    }
+    // SAFETY: the arguments are values; the handle is closed below.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+    let mut buffer = [0u16; 1024];
+    let mut length = buffer.len() as u32;
+    // SAFETY: the buffer is alive for the call and its length is passed; the
+    // call writes at most that many UTF-16 units and reports how many.
+    let outcome = unsafe {
+        QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_WIN32,
+            windows::core::PWSTR(buffer.as_mut_ptr()),
+            &mut length,
+        )
+    };
+    // SAFETY: the handle came from `OpenProcess` and is closed once, here.
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
+    outcome.ok()?;
+    let full = String::from_utf16_lossy(&buffer[..length as usize]);
+    full.rsplit('\\').next().map(str::to_string)
+}
+
+#[cfg(not(windows))]
+fn asking_process_image(_pid: u32) -> Option<String> {
+    None
+}
+
 /// Serve one connection until it ends or the service stops.
 ///
 /// # Why receiving and deciding are two threads
@@ -2318,6 +2429,28 @@ fn receive_until_the_port_ends(
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Storage::InstallableFileSystems::FilterGetMessage;
     let port = HANDLE(port as *mut core::ffi::c_void);
+
+    // `FilterGetMessage` blocks for ever when the driver is unloaded, rather
+    // than returning an error. That is the whole of the 2026-11-12 bug: the
+    // service kept saying it was connected while nothing was being asked, and
+    // only a service restart (which opened a fresh port) brought the gate back.
+    // Nothing in the call itself can be waited on, so a second thread watches
+    // for the filter disappearing and cancels this thread's synchronous
+    // receive; the call then returns, the loop below treats it as the
+    // connection ending, and `run` reconnects.
+    let thread_id = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let _finished = Finished(std::sync::Arc::clone(&done));
+    if let Err(error) = std::thread::Builder::new()
+        .name("wenle-av-filter-watchdog".to_string())
+        .spawn(move || watch_for_the_driver_going_away(thread_id, done))
+    {
+        // Without the watchdog the receive still works; what is lost is the
+        // recovery from a driver reload, which is the state this loop was in
+        // before the watchdog existed.
+        log::warn!("the filter-port watchdog could not be started: {error}");
+    }
+
     let mut buffer = ReceiveBuffer::zeroed();
     loop {
         // Cleared before every receive rather than after: the filter manager
@@ -2364,6 +2497,127 @@ fn receive_until_the_port_ends(
             return;
         }
     }
+}
+
+/// Clears the "the receive is over" flag when the receive thread goes away.
+///
+/// A guard rather than a store at the end of the loop because the loop has four
+/// ways out, and the watchdog must not outlive the thread it is watching for.
+struct Finished(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for Finished {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Wait for the filter to disappear, then cancel the receive that cannot see it.
+///
+/// `FilterGetMessage` is synchronous and is not documented to return when the
+/// filter it is connected to is unloaded; on the machine this was measured on it
+/// did not, and the port thread sat in it while the service reported itself
+/// connected. Cancelling the other thread's synchronous I/O is what makes the
+/// call return, and the receive loop already treats the resulting
+/// `ERROR_OPERATION_ABORTED` as the connection ending.
+#[cfg(windows)]
+fn watch_for_the_driver_going_away(thread_id: u32, done: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+    use windows::Win32::System::Threading::{OpenThread, THREAD_TERMINATE};
+
+    while !done.load(std::sync::atomic::Ordering::Relaxed) {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if done.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        if driver_is_loaded(FILTER_NAME) {
+            continue;
+        }
+        if let Ok(handle) = unsafe { OpenThread(THREAD_TERMINATE, false, thread_id) } {
+            // SAFETY: `handle` is a real thread handle with the one right the
+            // call needs, closed immediately after. Cancelling the receive the
+            // service itself issued is the intended use of the function.
+            unsafe {
+                let _ = windows::Win32::System::IO::CancelSynchronousIo(handle);
+                let _ = windows::Win32::Foundation::CloseHandle(handle);
+            }
+            log::info!(
+                "the filter {FILTER_NAME} is no longer loaded; the pending receive was cancelled so \
+                 the port can be reopened"
+            );
+        }
+        return;
+    }
+}
+
+/// Whether the filter manager still lists a filter by this name.
+#[cfg(windows)]
+fn driver_is_loaded(name: &str) -> bool {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::InstallableFileSystems::{
+        FilterFindClose, FilterFindFirst, FilterFindNext, FilterFullInformation,
+    };
+
+    let mut buffer = vec![0u8; 8192];
+    let mut returned = 0u32;
+    let mut find = HANDLE::default();
+    let mut outcome = unsafe {
+        FilterFindFirst(
+            FilterFullInformation,
+            buffer.as_mut_ptr().cast(),
+            buffer.len() as u32,
+            &mut returned,
+            &mut find,
+        )
+    };
+    loop {
+        if outcome.is_err() {
+            break;
+        }
+        if filter_is_in(&buffer, returned, name) {
+            let _ = unsafe { FilterFindClose(find) };
+            return true;
+        }
+        returned = 0;
+        outcome = unsafe {
+            FilterFindNext(
+                find,
+                FilterFullInformation,
+                buffer.as_mut_ptr().cast(),
+                buffer.len() as u32,
+                &mut returned,
+            )
+        };
+    }
+    let _ = unsafe { FilterFindClose(find) };
+    false
+}
+
+/// Whether one `FILTER_FULL_INFORMATION` list contains this filter name.
+#[cfg(windows)]
+fn filter_is_in(buffer: &[u8], length: u32, name: &str) -> bool {
+    use windows::Win32::Storage::InstallableFileSystems::FILTER_FULL_INFORMATION;
+
+    let end = (length as usize).min(buffer.len());
+    let mut offset = 0usize;
+    while offset + core::mem::size_of::<FILTER_FULL_INFORMATION>() <= end {
+        // SAFETY: the filter manager wrote a list of these records inside
+        // `buffer`, and every read below is bounded by `end`.
+        let info = unsafe { &*(buffer.as_ptr().add(offset) as *const FILTER_FULL_INFORMATION) };
+        let name_at = offset + core::mem::offset_of!(FILTER_FULL_INFORMATION, FilterNameBuffer);
+        let units = info.FilterNameLength as usize / 2;
+        if units > 0 && name_at + units * 2 <= end {
+            // SAFETY: the range was just checked inside the buffer, and `u16`
+            // has no invalid bit patterns.
+            let characters = unsafe { std::slice::from_raw_parts(buffer.as_ptr().add(name_at) as *const u16, units) };
+            if String::from_utf16_lossy(characters).eq_ignore_ascii_case(name) {
+                return true;
+            }
+        }
+        if info.NextEntryOffset == 0 {
+            break;
+        }
+        offset += info.NextEntryOffset as usize;
+    }
+    false
 }
 
 /// Report the messages that are not decisions, on their own thread.
@@ -3555,5 +3809,32 @@ mod tests {
         assert!(!refusing_gate(SubjectKind::WIRE_DRIVER));
         assert!(!refusing_gate(0));
         assert!(!refusing_gate(u32::MAX));
+    }
+}
+#[cfg(test)]
+mod guard_tests {
+    use super::{is_user_writable, CRITICAL_PROCESSES};
+    use std::path::Path;
+
+    #[test]
+    fn a_planted_file_is_recognised_by_where_it_lives() {
+        // The two the guard must treat as installed rather than planted.
+        assert!(!is_user_writable(Path::new(r"C:\Windows\System32\shell32.dll")));
+        assert!(!is_user_writable(Path::new(r"C:\Program Files\App\app.dll")));
+        assert!(!is_user_writable(Path::new(r"C:\Windows\WinSxS\amd64\x\y.dll")));
+        // And the places a hijacked search path or a replaced service entry
+        // can reach.
+        assert!(is_user_writable(Path::new(r"C:\Users\wensz\AppData\Local\evil.dll")));
+        assert!(is_user_writable(Path::new(r"C:\ProgramData\Microsoft\Windows Defender\Platform\4.18\x.dll")));
+        assert!(is_user_writable(Path::new(r"C:\Windows\Temp\evil.dll")));
+        assert!(is_user_writable(Path::new(r"C:\Windows\Tasks\evil.dll")));
+    }
+
+    #[test]
+    fn the_critical_list_is_the_one_windows_dies_without() {
+        for name in ["smss.exe", "csrss.exe", "wininit.exe", "services.exe", "lsass.exe", "svchost.exe"] {
+            assert!(CRITICAL_PROCESSES.iter().any(|listed| listed.eq_ignore_ascii_case(name)), "{name}");
+        }
+        assert!(!CRITICAL_PROCESSES.iter().any(|listed| listed.eq_ignore_ascii_case("explorer.exe")));
     }
 }
