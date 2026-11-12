@@ -23,6 +23,17 @@ The driver sits at altitude 321000. It can refuse five things:
 Everything else is reported and allowed. A gate that guesses is worse than a
 gate that says nothing.
 
+## What it compares against
+
+10,764 static rules, compiled into one database. They are drawn from the
+**extended** tier of [YARA-Forge](https://github.com/YARAHQ/yara-forge), which
+collects rules from forty-odd security repositories and standardises their
+metadata.
+
+The collection is not under one licence. Each rule keeps the licence its upstream
+stated, those are not uniform, and some upstreams state none at all. The MIT grant
+on this repository covers the code and not the rules: see Licensing below.
+
 ## Behaviour
 
 68 rules over file, registry and process events. Each one scores below the
@@ -111,8 +122,12 @@ HTTPS.
 
 ## Licensing
 
-The code is MIT (`LICENSE`). The rule sources are not distributed here, and the
-MIT grant does not cover the shipped database: `assets/rules.avdb` is a compiled
-derivative of the YARA-Forge packages (Apache-2.0), which merge upstream rules
-whose individual licenses are recorded in each package's headers, some of which
-state no license.
+The code is MIT (`LICENSE`). The rules are not.
+
+The shipped database, `assets/rules.avdb`, is a compiled derivative of the
+extended tier of [YARA-Forge](https://github.com/YARAHQ/yara-forge), whose
+packaging tool is Apache-2.0. The rules inside it are not Apache-2.0 as a whole:
+YARA-Forge collects them from forty-odd upstream repositories, keeps each rule's
+own licence in the package headers, and those licences are not uniform — some
+upstreams state none. Nothing in the MIT grant on this repository extends to them,
+and where an upstream stated no licence, none is claimed here.
