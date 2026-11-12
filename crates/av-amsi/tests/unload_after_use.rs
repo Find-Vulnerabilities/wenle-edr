@@ -24,7 +24,7 @@ fn a_scan_pins_the_module_for_the_rest_of_the_process() {
     assert!(can_unload(), "nothing has happened yet");
     assert_eq!(DllCanUnloadNow(), S_OK);
 
-    let scanner = Scanner::with_budget(Duration::from_millis(200));
+    let scanner = Scanner::with_pipe(r"\\.\pipe\wenleav-absent-for-this-test", Duration::from_millis(200));
     let scan = scanner.scan("Script Block", b"Get-ChildItem");
     assert!(
         matches!(scan, Scan::Unavailable(_)),

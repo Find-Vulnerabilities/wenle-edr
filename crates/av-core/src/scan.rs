@@ -514,7 +514,7 @@ mod tests {
         // launch under the old budget, for a verdict the driver had stopped
         // waiting for. Both caps are part of the contract now.
         assert_eq!(o.per_file_timeout, Some(Duration::from_secs(2)));
-        assert_eq!(o.max_file_size, Some(32 * 1024 * 1024));
+        assert_eq!(o.max_file_size, Some(8 * 1024 * 1024));
     }
 
     #[test]

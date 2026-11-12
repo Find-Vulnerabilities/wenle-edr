@@ -1314,18 +1314,30 @@ impl Dispatcher {
             );
             return (Decision::Allow, None);
         }
+        // Which database answers this decision. The gate database is a smaller
+        // corpus used for the first [`GATE_GRACE`]; a verdict it reaches must
+        // never be remembered, because the full corpus is the stronger engine
+        // and an entry would carry the weaker answer past the window that
+        // justified it. See [`crate::verdict_cache`].
+        let using_gate = self
+            .gate
+            .as_ref()
+            .is_some_and(|_| std::time::Instant::now() < self.gate_until);
+
         // A file whose bytes this service has already read and found clean. The
         // digest is computed from the file, so the answer cannot be forged with
         // a timestamp: see [`crate::verdict_cache`].
         let digest = crate::verdict_cache::digest_of(&path);
-        if let Some(digest) = &digest {
-            if let Ok(mut cache) = self.cache.lock() {
-                if cache.is_known_clean(digest) {
-                    log::debug!(
-                        "{} has the digest of a file found clean before; not scanned again",
-                        path.display()
-                    );
-                    return (Decision::Allow, None);
+        if !using_gate {
+            if let Some(digest) = &digest {
+                if let Ok(mut cache) = self.cache.lock() {
+                    if cache.is_known_clean(digest) {
+                        log::debug!(
+                            "{} has the digest of a file found clean before; not scanned again",
+                            path.display()
+                        );
+                        return (Decision::Allow, None);
+                    }
                 }
             }
         }
@@ -1342,11 +1354,12 @@ impl Dispatcher {
         const GATE_SCAN_LIMIT: u64 = 8 * 1024 * 1024;
         if let Ok(metadata) = std::fs::metadata(&path) {
             if metadata.is_file() && metadata.len() > GATE_SCAN_LIMIT {
-                if let Some(digest) = &digest {
-                    if let Ok(mut cache) = self.cache.lock() {
-                        cache.remember_clean(digest);
-                    }
-                }
+                // Deliberately *not* remembered. Nothing inspected these bytes,
+                // and an entry would turn "we skipped it" into "we cleared it"
+                // for the rest of the session -- the one thing a clean-file
+                // cache must never do, and the difference between this and the
+                // timestamp cache removed on 2026-11-08 is exactly that this
+                // one cannot be forged, so it must not be granted either.
                 log::debug!(
                     "{} is {} bytes, past the gate's {} byte limit; allowed without a rule scan",
                     path.display(),
@@ -1362,11 +1375,10 @@ impl Dispatcher {
         // the ordinary case, and the late conviction is [`report_late`]'s.
         // The gate database answers the boot storm; the full corpus answers
         // everything after it. Both are asked with the same options.
-        let gate = match &self.gate {
-            Some(pool) if std::time::Instant::now() < self.gate_until => Some(pool),
-            _ => None,
+        let pool = match (&self.gate, using_gate) {
+            (Some(gate), true) => gate,
+            _ => &self.pool,
         };
-        let pool = gate.unwrap_or(&self.pool);
         let Some(report) = pool.scan_within(&path, &self.options) else {
             return (Decision::Allow, None);
         };
@@ -1378,7 +1390,7 @@ impl Dispatcher {
         // Only a clean verdict on a file read to the end is remembered: a scan
         // that stopped at the size cap says nothing about the bytes past it, and
         // one that ended in an error says nothing at all.
-        if !convicted && report.error.is_none() && report.scanned_bytes >= report.size {
+        if !convicted && !using_gate && report.error.is_none() && report.scanned_bytes >= report.size {
             if let Some(digest) = report.digests.sha256.as_deref().or(digest.as_deref()) {
                 if let Ok(mut cache) = self.cache.lock() {
                     cache.remember_clean(digest);

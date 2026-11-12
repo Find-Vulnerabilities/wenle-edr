@@ -406,7 +406,15 @@ mod tests {
     /// by hanging, which is the property under test.
     #[test]
     fn a_scan_with_no_service_answers_quickly_and_with_no_opinion() {
-        let scanner = Scanner::with_budget(Duration::from_millis(300));
+        // A pipe that does not exist, rather than the machine's own: these two
+// tests are about what a scanner answers when no service is there, and on a
+// machine where one is running the real pipe answers instead. The test
+// passed on a build agent and failed on a developer's machine for that
+        // reason.
+        let scanner = Scanner::with_pipe(
+            r"\\.\pipe\wenleav-absent-for-this-test",
+            Duration::from_millis(300),
+        );
         let started = std::time::Instant::now();
         let scan = scanner.scan("Script Block", b"Get-ChildItem");
         let elapsed = started.elapsed();
@@ -426,7 +434,15 @@ mod tests {
         // The two verdicts that would be wrong in opposite directions. `Clean`
         // would tell a caller the content was examined; `Malicious` would tell
         // it to refuse content nothing looked at.
-        let scanner = Scanner::with_budget(Duration::from_millis(300));
+        // A pipe that does not exist, rather than the machine's own: these two
+// tests are about what a scanner answers when no service is there, and on a
+// machine where one is running the real pipe answers instead. The test
+// passed on a build agent and failed on a developer's machine for that
+        // reason.
+        let scanner = Scanner::with_pipe(
+            r"\\.\pipe\wenleav-absent-for-this-test",
+            Duration::from_millis(300),
+        );
         let scan = scanner.scan("Script Block", b"Get-ChildItem");
         assert_eq!(scan.verdict(), Verdict::Unknown);
         assert_ne!(scan.verdict(), Verdict::Clean);

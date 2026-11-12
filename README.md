@@ -47,7 +47,7 @@ and a process that allocated less look identical in Task Manager.
 | | |
 |---|---|
 | idle working set, after Windows trims it | 80–150 MB |
-| private bytes while idle | about 290 MB |
+| private bytes while idle | 330�420 MB |
 | CPU, ordinary use | 1–5 % of one core |
 | CPU, scanning bursts | up to two cores |
 | the first minutes after boot | up to 1.3 GB working set while the scan queue drains, trimmed back by Windows |
