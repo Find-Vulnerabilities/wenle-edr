@@ -1909,6 +1909,29 @@ impl Host {
                             hit.path,
                             hit.description
                         );
+                        // The same shape the rule engine's findings produce, so
+                        // that a front end reads one kind of detection however
+                        // it was reached. Reported, not acted on: the detector
+                        // is calibrated and the response is not, and a product
+                        // that quarantines a file on a detector's first week is
+                        // a product that teaches its user to turn it off.
+                        let path = std::path::PathBuf::from(&hit.path);
+                        out.push(Event::Detection(Detection {
+                            file_name: file_name_of(&path),
+                            path,
+                            verdict: Verdict::Malicious,
+                            score: hit.score,
+                            severity: av_core::Severity::High,
+                            threat: None,
+                            rules: vec![hit.id.to_string()],
+                            action: DetectionAction::Reported,
+                            source: EntrySource::Behaviour,
+                            size: 0,
+                            at: Utc::now(),
+                            in_process: None,
+                            terminated: false,
+                            phase: Phase::observed(EntrySource::Behaviour, false),
+                        }));
                     }
                 }
                 self.behaviour.observe(&record)
