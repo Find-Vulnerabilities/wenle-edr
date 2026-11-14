@@ -68,6 +68,20 @@ pub const fn should_retry_connect(consecutive_failures: u32) -> bool {
     consecutive_failures < MAX_CONNECT_FAILURES
 }
 
+/// Whether a failed connect is a client that came and went.
+///
+/// The operating system reports a client that disconnected before the server
+/// reached `ConnectNamedPipe` as an error on the *connect*, and the three
+/// messages below are how it does so. They are the shape of every one-request
+/// client this product has, so they are classified by text rather than by code:
+/// the error has crossed two crate boundaries as a formatted sentence by the
+/// time it reaches here, and a code that has been flattened into a sentence
+/// cannot be matched as a number.
+fn client_flap(error: &ServiceError) -> bool {
+    let text = error.to_string().to_ascii_lowercase();
+    text.contains("being closed") || text.contains("no data") || text.contains("not connected")
+}
+
 /// Whether an error means the client is gone rather than that it misbehaved.
 ///
 /// The distinction is only about how loudly to complain. Every error ends the
@@ -183,7 +197,17 @@ pub fn serve_on(host: Host, stop: &AtomicBool, name: &str) -> Result<Host, Servi
                 serve_client(&mut host, connection, stop);
             }
             Err(error) => {
-                failures += 1;
+                // A client that arrived and left before `ConnectNamedPipe` was
+                // called answers with `ERROR_NO_DATA` or `ERROR_PIPE_NOT_CONNECTED`
+                // ("The pipe is being closed"). That is the ordinary shape of a
+                // one-request client — `wenle service status` — and it must not
+                // count toward the threshold that ends the service: measured on
+                // the host on 2026-11-14, sixteen of them in a row stopped the
+                // service mid-session. Anything else is a broken pipe and is
+                // counted as before.
+                if !client_flap(&error) {
+                    failures += 1;
+                }
                 if !should_retry_connect(failures) {
                     return Err(error);
                 }

@@ -29,6 +29,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use av_behaviour::{Features, Record};
 
@@ -107,6 +108,14 @@ impl BehaviourLog {
     }
 }
 
+/// Microseconds since the Unix epoch.
+fn now_micros() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_micros() as u64)
+        .unwrap_or(0)
+}
+
 /// The line for one event.
 ///
 /// `pid` and `ppid` are what the trainer groups by; the timestamp orders the
@@ -120,7 +129,13 @@ pub fn line(record: &Record, features: &Features) -> String {
     out.push(' ');
     out.push_str(&record.parent_process_id.to_string());
     out.push(' ');
-    out.push_str(&record.timestamp.to_string());
+    // Wall-clock, not the driver's timestamp. The driver counts in its own
+    // units from its own start, and a label file written by a person is in Unix
+    // microseconds; measured on 2026-11-14, the two never met and every
+    // malicious window held zero events. The gap between events is already one
+    // of the features, so the driver's clock loses nothing by being dropped
+    // here.
+    out.push_str(&now_micros().to_string());
     for value in features.0.iter() {
         out.push(' ');
         out.push_str(&format!("{value:.3}"));
