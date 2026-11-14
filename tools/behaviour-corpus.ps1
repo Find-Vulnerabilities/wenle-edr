@@ -77,7 +77,7 @@ $families['ransom_rename'] = @'
 # D4's shape: documents renamed in bulk and a recovery-deleting command line.
 # The deletion is echoed, not run: the command line is the evidence and this
 # family is not allowed to damage the machine it measures.
-$root = Join-Path $env:TEMP 'corpus-ransom-rename'
+$root = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'corpus-ransom-rename'
 New-Item -ItemType Directory -Path $root -Force | Out-Null
 1..25 | ForEach-Object { Set-Content -Path (Join-Path $root ("doc{0:D2}.txt" -f $_)) -Value 'document' }
 Start-Sleep -Milliseconds 200

@@ -202,7 +202,10 @@ impl Staging {
                     {
                         self.task_at = Some((record.timestamp, record.process_id));
                         if let Some((when, who)) = self.run_key_at {
-                            if who == record.process_id
+                            // The halves are often a parent and its child: the
+                            // shell writes the key and starts `schtasks`. Same
+                            // process or immediate parent, and no further.
+                            if (who == record.process_id || who == record.parent_process_id)
                                 && record.timestamp.saturating_sub(when)
                                     <= 120 * crate::TICKS_PER_SECOND
                             {
@@ -220,10 +223,13 @@ impl Staging {
                         || lower.contains("recoveryenabled no")
                     {
                         self.shadow_at = Some((record.timestamp, record.process_id));
-                        let recent_renames = self
-                            .renames
-                            .get(&record.process_id)
-                            .is_some_and(|queue| queue.len() >= 20);
+                        let recent_renames = [record.process_id, record.parent_process_id]
+                            .iter()
+                            .any(|pid| {
+                                self.renames
+                                    .get(pid)
+                                    .is_some_and(|queue| queue.len() >= 20)
+                            });
                         if recent_renames {
                             hits.push(Hit {
                                 id: "behaviour/ransomware-shape",
