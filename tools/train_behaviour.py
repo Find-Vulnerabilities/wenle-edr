@@ -56,22 +56,33 @@ def load_events(path):
 
 
 def load_windows(path):
+    """The windows, with the process each one started.
+
+    The pid is what makes a label true. A window is a stretch of time, and a
+    build running beside the corpus is inside the same stretch; measured on
+    2026-11-14, time-only labels called 37,929 sequences malicious when the
+    families were a few hundred. A window without a pid is skipped: it cannot
+    say which process it was about.
+    """
     windows = []
     with open(path, "r", encoding="utf-8") as handle:
         next(handle, None)
         for line in handle:
             parts = line.strip().split(",")
-            if len(parts) != 4:
+            if len(parts) < 5:
                 continue
             try:
-                windows.append((int(parts[0]), int(parts[1]), parts[2], parts[3]))
+                pid = int(parts[4])
             except ValueError:
                 continue
+            if pid == 0:
+                continue
+            windows.append((int(parts[0]), int(parts[1]), parts[2], parts[3], pid))
     return windows
 
 
 def label_for(timestamp, windows):
-    for start, end, label, family in windows:
+    for start, end, label, family, _pid in windows:
         if start <= timestamp <= end:
             return label, family
     return None, None
@@ -99,28 +110,49 @@ def build_sequences(events, windows):
     if current:
         sequences.append((current_pid, current))
 
+    # Which process each window started, and which label it carries. A pid
+    # labelled once is not relabelled by a later window: the corpus runs one
+    # family at a time, so a pid has exactly one owner.
+    parent = {}
+    for pid, ppid, _timestamp, _features in events:
+        parent.setdefault(pid, ppid)
+    malicious_roots = set()
+    benign_roots = set()
+    owner = {}
+    for _start, _end, label, family, pid in windows:
+        target = malicious_roots if label == "malicious" else benign_roots
+        target.add(pid)
+        owner.setdefault(pid, (label, family))
+
+    def owner_of(pid):
+        """The window whose process this pid descends from, if any."""
+        seen = set()
+        while pid and pid not in seen:
+            if pid in owner:
+                return owner[pid]
+            seen.add(pid)
+            pid = parent.get(pid, 0)
+        return None
+
     labelled = []
     for pid, items in sequences:
-        hits = []
-        for timestamp, _ in items:
-            label, family = label_for(timestamp, windows)
-            if label is not None:
-                hits.append((label, family))
-        if not hits:
-            # No window mentions this sequence: it is background work from the
-            # machine itself, which is benign by default. Keeping it is what
-            # teaches the model what ordinary work looks like.
+        root = owner_of(pid)
+        if root is None:
+            # No window started this process or any of its ancestors: it is
+            # background work from the machine itself, which is benign by
+            # default. Keeping it is what teaches the model what ordinary work
+            # looks like.
             labelled.append(("benign", "background", [features for _, features in items]))
             continue
-        labels = [label for label, _ in hits]
-        label = "malicious" if "malicious" in labels else "benign"
-        family = hits[0][1]
+        label, family = root
         labelled.append((label, family, [features for _, features in items]))
     return labelled
 
 
 def pad(sequence):
     """The last LENGTH events, left-padded with zeros."""
+    if isinstance(sequence, np.ndarray):
+        return sequence.astype(np.float32)
     if len(sequence) > LENGTH:
         sequence = sequence[-LENGTH:]
     missing = LENGTH - len(sequence)
@@ -228,7 +260,7 @@ def sigmoid(value):
 def train(model, sequences, labels, epochs, class_weight):
     positives = [index for index, label in enumerate(labels) if label > 0.5]
     background = [index for index, label in enumerate(labels) if label <= 0.5]
-    order = np.array(background + positives * 12)
+    order = np.array(background + positives * 4)
     rng = np.random.default_rng(11)
     weights = [np.zeros_like(parameter) for parameter in model.params()]
     moments = [np.zeros_like(parameter) for parameter in model.params()]
@@ -279,35 +311,87 @@ def export(model, path):
     print("weights written to %s (%d bytes)" % (path, os.path.getsize(path)))
 
 
-def evaluate(model, sequences, labels):
+def scores_of(model, sequences):
     if not sequences:
-        return 0.0, 0.0
+        return np.zeros(0, dtype=np.float32)
     batch = np.stack(sequences)
     probability, _ = model.forward(batch)
-    scores = probability.reshape(-1)
+    return probability.reshape(-1)
+
+
+def auc(scores, labels):
+    """Rank-based AUC: the probability a random malicious scores above a benign."""
     truth = np.array(labels)
-    malicious = scores[truth == 1]
+    positives = scores[truth == 1]
+    negatives = scores[truth == 0]
+    if positives.size == 0 or negatives.size == 0:
+        return float("nan")
+    order = np.argsort(np.concatenate([positives, negatives]))
+    ranks = np.empty(order.size, dtype=np.float64)
+    ranks[order] = np.arange(1, order.size + 1)
+    positive_ranks = ranks[: positives.size].sum()
+    return float(
+        (positive_ranks - positives.size * (positives.size + 1) / 2)
+        / (positives.size * negatives.size)
+    )
+
+
+def threshold_at(scores, labels, target_fpr):
+    """The score above which `target_fpr` of benign sequences sit.
+
+    The threshold a product would ship is chosen by what it costs when it is
+    wrong, and the cost of calling ordinary work malicious is what the user
+    feels. Picking it from the benign distribution is the only way the recall
+    number means anything: a recall at 0.5 says nothing about the false
+    positives a deployment would actually have.
+    """
+    truth = np.array(labels)
     benign = scores[truth == 0]
-    recall = float((malicious > 0.5).mean()) if malicious.size else 0.0
-    false_positive = float((benign > 0.5).mean()) if benign.size else 0.0
-    return recall, false_positive
+    if benign.size == 0:
+        return 0.5
+    return float(np.quantile(benign, 1.0 - target_fpr))
+
+
+def metrics(scores, labels, threshold):
+    truth = np.array(labels)
+    return {
+        "recall": float((scores[truth == 1] > threshold).mean()) if (truth == 1).any() else float("nan"),
+        "false_positive": float((scores[truth == 0] > threshold).mean()) if (truth == 0).any() else float("nan"),
+        "threshold": threshold,
+        "auc": auc(scores, labels),
+    }
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--log", required=True)
-    parser.add_argument("--labels", required=True)
+    parser.add_argument("--log")
+    parser.add_argument("--labels")
+    parser.add_argument("--npz", help="prepared sequences from prepare_behaviour.py")
     parser.add_argument("--out", required=True)
     parser.add_argument("--holdout", default=None, help="family to leave out")
     parser.add_argument("--epochs", type=int, default=400)
     parser.add_argument("--min-sequences", type=int, default=8)
+    parser.add_argument("--fpr", type=float, default=0.001, help="benign quantile for the threshold")
     args = parser.parse_args()
 
-    events = load_events(args.log)
-    windows = load_windows(args.labels)
-    print("events %d, windows %d" % (len(events), len(windows)))
-    sequences = build_sequences(events, windows)
-    print("sequences %d" % len(sequences))
+    if args.npz:
+        stored = np.load(args.npz, allow_pickle=False)
+        x = stored["x"]
+        y = stored["y"]
+        families = stored["family"]
+        # `sequences` is the same shape the parser produces: label, family,
+        # events. The events are already padded, so `pad` is the identity here.
+        sequences = [
+            ("malicious" if y[index] > 0.5 else "benign", str(families[index]), list(x[index]))
+            for index in range(len(y))
+        ]
+        print("prepared: %d sequences, %d malicious" % (len(sequences), int(y.sum())))
+    else:
+        events = load_events(args.log)
+        windows = load_windows(args.labels)
+        print("events %d, windows %d" % (len(events), len(windows)))
+        sequences = build_sequences(events, windows)
+        print("sequences %d" % len(sequences))
 
     def is_malicious(label):
         return 1.0 if label == "malicious" else 0.0
@@ -325,13 +409,17 @@ def main():
             [pad(item[2]) for item in train_items],
             [is_malicious(item[0]) for item in train_items],
             args.epochs,
-            class_weight=8.0,
+            class_weight=4.0,
         )
-        recall, false_positive = evaluate(
-            model, [pad(item[2]) for item in test_items], [is_malicious(item[0]) for item in test_items]
-        )
-        report[args.holdout] = {"recall": recall, "false_positive": false_positive, "sequences": len(test_items)}
+        train_scores = scores_of(model, [pad(item[2]) for item in train_items])
+        train_labels = [is_malicious(item[0]) for item in train_items]
+        threshold = threshold_at(train_scores, train_labels, args.fpr)
+        test_scores = scores_of(model, [pad(item[2]) for item in test_items])
+        test_labels = [is_malicious(item[0]) for item in test_items]
+        report[args.holdout] = metrics(test_scores, test_labels, threshold)
+        report[args.holdout]["sequences"] = len(test_items)
         print(json.dumps(report, indent=2))
+        export(model, args.out)
         return 0
 
     model = GRU()
@@ -340,12 +428,16 @@ def main():
         [pad(item[2]) for item in sequences],
         [is_malicious(item[0]) for item in sequences],
         args.epochs,
-        class_weight=8.0,
+        class_weight=4.0,
     )
-    recall, false_positive = evaluate(
-        model, [pad(item[2]) for item in sequences], [is_malicious(item[0]) for item in sequences]
+    all_scores = scores_of(model, [pad(item[2]) for item in sequences])
+    all_labels = [is_malicious(item[0]) for item in sequences]
+    threshold = threshold_at(all_scores, all_labels, args.fpr)
+    result = metrics(all_scores, all_labels, threshold)
+    print(
+        "training: recall %.3f  false positive %.4f  auc %.3f  threshold %.3f"
+        % (result["recall"], result["false_positive"], result["auc"], result["threshold"])
     )
-    print("training-set recall %.3f  false positive %.3f" % (recall, false_positive))
     export(model, args.out)
     return 0
 

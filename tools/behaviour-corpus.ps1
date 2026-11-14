@@ -139,19 +139,24 @@ $rows = New-Object System.Collections.Generic.List[string]
 # Appended, not overwritten: every round is another window for the trainer, and
 # a second run that replaced the first would throw away the first day of data.
 if (-not (Test-Path $labels)) {
-    $rows.Add('start_micros,end_micros,label,family')
+    $rows.Add('start_micros,end_micros,label,family,pid')
 }
 
 function Invoke-One([string]$label, [string]$family, [string]$body) {
     $path = Write-Family -name ("{0}_{1}" -f $label, $family) -body $body
     $start = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() * 1000
     # Run in a fresh host so the story begins at the script, and wait for it:
-    # a window that overlapped the next family would be labelled twice.
-    Start-Process -FilePath powershell.exe -WindowStyle Hidden -Wait -ArgumentList @(
+    # a window that overlapped the next family would be labelled twice. The pid
+    # is recorded because a window is not a label: a build running beside the
+    # corpus is inside the same window and is not malicious, and measured on
+    # 2026-11-14 a time-only label called 37,929 sequences malicious when the
+    # families were a few hundred.
+    $process = Start-Process -FilePath powershell.exe -WindowStyle Hidden -PassThru -Wait -ArgumentList @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $path
     )
     $end = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() * 1000
-    $rows.Add(("{0},{1},{2},{3}" -f $start, $end, $label, $family))
+    $pid_text = if ($process) { $process.Id } else { 0 }
+    $rows.Add(("{0},{1},{2},{3},{4}" -f $start, $end, $label, $family, $pid_text))
     Write-Output ("{0} {1} {2} us" -f $label, $family, ($end - $start))
 }
 
