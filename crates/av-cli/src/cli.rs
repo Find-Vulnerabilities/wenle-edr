@@ -101,6 +101,12 @@ pub enum Command {
     /// package on one mismatch, so a failed update cannot leave half an
     /// installation behind.
     Update(UpdateArgs),
+    /// The rule database, and where it comes from.
+    ///
+    /// The product ships no rules: they are other people's work under other
+    /// people's licences. This is how a machine gets some, and how it keeps
+    /// them current.
+    Rules(RulesArgs),
     /// Show the configuration in force, and which of its keys this build acts
     /// on.
     ///
@@ -1050,6 +1056,46 @@ pub struct ScanArgs {
     /// Do not draw the progress line, even on a terminal.
     #[arg(long)]
     pub no_progress: bool,
+}
+
+#[derive(Debug, ClapArgs)]
+pub struct RulesArgs {
+    #[command(subcommand)]
+    pub command: RulesCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RulesCommand {
+    /// What is installed, and what is published.
+    Status,
+    /// Download, compile and install the YARA-Forge extended package.
+    Update {
+        /// Fetch this URL instead of the published extended package.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
+        /// Compile this package file instead of downloading one.
+        #[arg(long, value_name = "FILE")]
+        from: Option<PathBuf>,
+        /// The SHA-256 the package must have; defaults to the digest the
+        /// release publishes, which is what makes the check mean anything.
+        #[arg(long, value_name = "SHA256")]
+        digest: Option<String>,
+        /// Accept a package whose release publishes no digest.
+        #[arg(long)]
+        allow_unverified: bool,
+        /// Leave the service alone; the new database takes effect when it
+        /// next starts.
+        #[arg(long)]
+        no_restart: bool,
+        /// Compile and report, and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Turn automatic rule updates on or off.
+    Auto {
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
+    },
 }
 
 #[derive(Debug, ClapArgs)]

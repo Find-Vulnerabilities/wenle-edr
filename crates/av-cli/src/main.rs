@@ -118,6 +118,7 @@ fn main() -> std::process::ExitCode {
         Command::Memory(memory) => commands::memory::run(memory, &globals, &context),
         Command::Build(build) => commands::build::run(build, &globals, &context),
         Command::Db(db) => commands::db::run(&db.command, &globals, &context),
+        Command::Rules(rules) => commands::rules::run(rules, &globals, &context),
         Command::Quarantine(quarantine) => {
             commands::quarantine::run(quarantine, &globals, &context)
         }

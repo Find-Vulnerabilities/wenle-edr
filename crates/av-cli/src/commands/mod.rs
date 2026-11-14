@@ -23,6 +23,7 @@ pub mod integrate;
 pub mod memory;
 pub mod protect;
 pub mod quarantine;
+pub mod rules;
 pub mod scan;
 pub mod service;
 pub mod update;
