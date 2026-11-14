@@ -60,7 +60,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 rust-version = "1.82"
 license = "MIT"
@@ -88,7 +88,7 @@ crc32fast = "1"
 aho-corasick = "1.1"
 regex = "1"
 # A regular expression's parse tree, used to work out which bytes a regex
-# *requires* — the prefilter cannot ask `regex` itself, which hands back only a
+# *requires* ??? the prefilter cannot ask `regex` itself, which hands back only a
 # compiled matcher with the structure already folded away.
 regex-syntax = "0.8"
 # The substring search every string matcher ultimately performs. `aho-corasick`
@@ -103,7 +103,7 @@ memchr = "2"
 # Writing DEFLATE by hand was considered and rejected. The decoder would be
 # several hundred lines of bit-twiddling over bytes chosen by whoever wrote the
 # archive, exercised by every zip a user opens, and reachable before any rule
-# has judged the file — which makes it the single largest attack surface in the
+# has judged the file ??? which makes it the single largest attack surface in the
 # product, and one whose bugs would be ours alone. `miniz_oxide` is pure Rust,
 # has no `unsafe` in its decoding path, and is the backend of the `flate2` build
 # selected below.
@@ -157,7 +157,7 @@ console = "0.15"
 # engine event into it and keeping the two in step.
 #
 # Pinned to 0.31 rather than the newest 0.36 for one reason: 0.36 declares a
-# minimum rustc of 1.95, and this workspace's `rust-version` is 1.82 — a promise
+# minimum rustc of 1.95, and this workspace's `rust-version` is 1.82 ??? a promise
 # stated in every crate's manifest. Raising it for a UI toolkit would raise it
 # for the scanner as well, and what separates the two releases is styling API
 # this front end has no use for.
@@ -236,14 +236,14 @@ strip = "symbols"
 # `unwind`, and the reason is one crate.
 #
 # `av-amsi` is an in-process COM server that Windows loads into whatever process
-# asks AMSI a question — `powershell.exe`, `wscript.exe`, Office. A panic under
+# asks AMSI a question ??? `powershell.exe`, `wscript.exe`, Office. A panic under
 # `abort` there is the host process dying, and a security product that kills a
 # user's PowerShell window is a security product that gets uninstalled. That
 # crate catches panics at every COM entry point, and `catch_unwind` catches only
 # what unwinds.
 #
-# The profile cannot be set per package — Cargo refuses `panic` in
-# `[profile.<name>.package.<name>]` — so it is set here, for every user-mode
+# The profile cannot be set per package ??? Cargo refuses `panic` in
+# `[profile.<name>.package.<name>]` ??? so it is set here, for every user-mode
 # crate. The cost is a little unwind table in binaries that never use it, and
 # the alternative is a released DLL that aborts the process it was loaded into.
 #
@@ -297,13 +297,13 @@ iter_over_hash_type = "warn"
 #
 # Deliberately *not* enabled:
 #
-# * `arithmetic_side_effects` — a restriction lint that flags every `i += 1` in
+# * `arithmetic_side_effects` ??? a restriction lint that flags every `i += 1` in
 #   a loop counter or a lexer's line tally. Overflow there is impossible in
 #   practice and the lint drowns out real findings. The places where wrapping
 #   would be a security bug (verdict scores, byte offsets into an untrusted
 #   buffer) use saturating or checked arithmetic explicitly, which documents the
 #   intent far better than a blanket lint.
-# * `panic` — fires on every `assert!` and `panic!` in test and test-helper
+# * `panic` ??? fires on every `assert!` and `panic!` in test and test-helper
 #   code. A panic in a test *is* the desired behaviour, so the lint can only be
 #   made useful by relaxing it everywhere it would fire.
 
