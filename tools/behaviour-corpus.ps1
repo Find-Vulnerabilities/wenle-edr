@@ -61,6 +61,32 @@ Start-Sleep -Milliseconds 300
 Remove-Item -Path $root -Recurse -Force
 '@
 
+$families['persistence_combo'] = @'
+# D3's shape: a Run key and a scheduled task inside the same minute. Both are
+# ordinary on their own and are what every installer does; together they are
+# how persistence is arranged. Harmless: both are removed.
+$key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+Set-ItemProperty -Path $key -Name 'CorpusCombo' -Value 'C:\Windows\System32\cmd.exe /c echo x'
+schtasks /create /tn CorpusCombo /tr "cmd.exe /c echo x" /sc minute /mo 5 /f | Out-Null
+Start-Sleep -Milliseconds 600
+schtasks /delete /tn CorpusCombo /f | Out-Null
+Remove-ItemProperty -Path $key -Name 'CorpusCombo'
+'@
+
+$families['ransom_rename'] = @'
+# D4's shape: documents renamed in bulk and a recovery-deleting command line.
+# The deletion is echoed, not run: the command line is the evidence and this
+# family is not allowed to damage the machine it measures.
+$root = Join-Path $env:TEMP 'corpus-ransom-rename'
+New-Item -ItemType Directory -Path $root -Force | Out-Null
+1..25 | ForEach-Object { Set-Content -Path (Join-Path $root ("doc{0:D2}.txt" -f $_)) -Value 'document' }
+Start-Sleep -Milliseconds 200
+1..25 | ForEach-Object { Rename-Item -Path (Join-Path $root ("doc{0:D2}.txt" -f $_)) -NewName ("doc{0:D2}.locked" -f $_) }
+cmd /c "echo vssadmin delete shadows /all /quiet" | Out-Null
+Start-Sleep -Milliseconds 300
+Remove-Item -Path $root -Recurse -Force
+'@
+
 $families['persistence_run'] = @'
 $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 Set-ItemProperty -Path $key -Name 'CorpusUpdater' -Value 'C:\Windows\System32\cmd.exe /c echo x'

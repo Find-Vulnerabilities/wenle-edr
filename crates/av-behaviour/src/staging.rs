@@ -89,6 +89,14 @@ pub struct Staging {
     recent: HashMap<String, (u64, u32)>,
     /// Insertion order, so the map can be trimmed.
     order: VecDeque<String>,
+    /// Document renames per process, so a burst can be counted.
+    renames: HashMap<u32, VecDeque<u64>>,
+    /// When a Run key was written, and when a task or service install command
+    /// was seen. Persistence is one act in two halves.
+    run_key_at: Option<u64>,
+    task_at: Option<u64>,
+    /// When a recovery-destroying command line was seen.
+    shadow_at: Option<u64>,
 }
 
 impl Staging {
@@ -101,6 +109,10 @@ impl Staging {
     pub fn clear(&mut self) {
         self.recent.clear();
         self.order.clear();
+        self.renames.clear();
+        self.run_key_at = None;
+        self.task_at = None;
+        self.shadow_at = None;
     }
 
     /// Feed one event, and return the hits it completes.
@@ -176,6 +188,46 @@ impl Staging {
                         }
                     }
                 }
+                // The command-line halves of persistence and of ransomware
+                // preparation. Both are exact strings a user can read; the
+                // families that use them are the ones whose damage is done by a
+                // command line rather than by a file.
+                if let Some(command_line) = record.command_line.as_deref() {
+                    let lower = command_line.to_ascii_lowercase();
+                    if lower.contains("schtasks") && lower.contains("/create")
+                        || lower.contains("sc ") && lower.contains(" create ")
+                    {
+                        self.task_at = Some(record.timestamp);
+                        if let Some(when) = self.run_key_at {
+                            if record.timestamp.saturating_sub(when) <= 120 * crate::TICKS_PER_SECOND {
+                                hits.push(Hit {
+                                    id: "behaviour/persistence-arranged",
+                                    score: 120,
+                                    path: record.path.clone().unwrap_or_default(),
+                                    description: "A task or service install ran beside a Run key within two minutes.".to_string(),
+                                });
+                            }
+                        }
+                    }
+                    if lower.contains("vssadmin") && lower.contains("delete shadows")
+                        || lower.contains("wbadmin") && lower.contains("delete catalog")
+                        || lower.contains("recoveryenabled no")
+                    {
+                        self.shadow_at = Some(record.timestamp);
+                        let recent_renames = self
+                            .renames
+                            .values()
+                            .any(|queue| queue.len() >= 20);
+                        if recent_renames {
+                            hits.push(Hit {
+                                id: "behaviour/ransomware-shape",
+                                score: 150,
+                                path: record.path.clone().unwrap_or_default(),
+                                description: "Recovery copies were deleted while documents were being renamed.".to_string(),
+                            });
+                        }
+                    }
+                }
                 // The document-to-script chain. `class_of` for the parent is
                 // what the service learned when it saw that parent start; a
                 // parent it never saw is class 8 and cannot be Office.
@@ -192,10 +244,89 @@ impl Staging {
                     });
                 }
             }
+            Action::FileRenamed => {
+                // Ransomware renames documents in bulk. A build renames its own
+                // objects in bulk too, which is why the extension and the
+                // directory are checked: an object file under `target` is not a
+                // document, and counting it is how a behaviour detector learns
+                // to cry at every compile.
+                if let Some(path) = record.path.as_deref() {
+                    if document_extension(path) && !temporary_or_target(path) {
+                        let now = record.timestamp;
+                        let window = 30 * crate::TICKS_PER_SECOND;
+                        let queue = self.renames.entry(record.process_id).or_default();
+                        queue.push_back(now);
+                        while queue
+                            .front()
+                            .is_some_and(|oldest| now.saturating_sub(*oldest) > window)
+                        {
+                            queue.pop_front();
+                        }
+                        if queue.len() >= 20 {
+                            hits.push(Hit {
+                                id: "behaviour/mass-document-rename",
+                                score: 70,
+                                path: path.to_string(),
+                                description: format!(
+                                    "{} documents were renamed in under 30 s.",
+                                    queue.len()
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+            Action::RegistryChanged => {
+                if let Some(path) = record.path.as_deref() {
+                    let lower = path.to_ascii_lowercase();
+                    if lower.contains("currentversion\\run") {
+                        self.run_key_at = Some(record.timestamp);
+                        // Persistence is two halves: the key is written and
+                        // something is arranged to act on it. One half alone is
+                        // what every installer does.
+                        if let Some(when) = self.task_at {
+                            if record.timestamp.saturating_sub(when) <= 120 * crate::TICKS_PER_SECOND {
+                                hits.push(Hit {
+                                    id: "behaviour/persistence-arranged",
+                                    score: 120,
+                                    path: path.to_string(),
+                                    description: "A Run key was written beside a task or service install within two minutes.".to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
             _ => {}
         }
         hits
     }
+}
+
+/// Extensions that ransomware renames.
+fn document_extension(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    let extension = lower.rsplit('.').next().unwrap_or("");
+    matches!(
+        extension,
+        "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "pdf" | "txt" | "rtf"
+            | "jpg" | "jpeg" | "png" | "csv" | "psd" | "zip" | "db"
+            // The extensions a ransomware family renames *to*. The rename
+            // event carries the new name, so a detector that only knows the
+            // old ones never sees the act it was written for.
+            | "locked" | "encrypted" | "crypt" | "crypto" | "wncry" | "enc" | "zzz"
+            | "kraken" | "conti" | "babuk" | "lockbit"
+    )
+}
+
+/// Whether a path is somewhere build output or temporary files live.
+fn temporary_or_target(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.contains("\\target\\")
+        || lower.contains("\\temp\\")
+        || lower.contains("\\tmp\\")
+        || lower.contains("\\.cargo\\")
+        || lower.contains("\\deps\\")
 }
 
 #[cfg(test)]
@@ -329,6 +460,114 @@ mod tests {
         let hits = staging.observe(&start, |_| None);
         assert_eq!(hits.len(), 1, "the command line names the written file");
         assert_eq!(hits[0].id, "behaviour/staged-and-run");
+    }
+
+    #[test]
+    fn a_run_key_alone_is_not_persistence() {
+        let mut staging = Staging::new();
+        let mut key = event(
+            Action::RegistryChanged,
+            10,
+            1,
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+            1_000,
+        );
+        key.subject = Subject::Registry;
+        assert!(staging.observe(&key, |_| None).is_empty());
+    }
+
+    #[test]
+    fn a_run_key_and_a_task_install_together_are_persistence() {
+        let mut staging = Staging::new();
+        let mut key = event(
+            Action::RegistryChanged,
+            10,
+            1,
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+            1_000,
+        );
+        key.subject = Subject::Registry;
+        staging.observe(&key, |_| None);
+        let mut task = event(
+            Action::ProcessStarted,
+            11,
+            10,
+            r"C:\Windows\System32\schtasks.exe",
+            5_000,
+        );
+        task.command_line = Some(
+            r"schtasks /create /tn Updater /tr cmd.exe /sc minute /mo 5".to_string(),
+        );
+        let hits = staging.observe(&task, |_| None);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].id, "behaviour/persistence-arranged");
+    }
+
+    #[test]
+    fn a_burst_of_build_renames_is_not_ransomware() {
+        let mut staging = Staging::new();
+        for index in 0..40u64 {
+            let event = event(
+                Action::FileRenamed,
+                10,
+                1,
+                r"C:\Users\x\Downloads\wenle-av\target\release\obj.o",
+                1_000 + index,
+            );
+            assert!(staging.observe(&event, |_| None).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_burst_of_document_renames_is() {
+        let mut staging = Staging::new();
+        let mut last = Vec::new();
+        for index in 0..25u64 {
+            last = staging.observe(
+                &event(
+                    Action::FileRenamed,
+                    10,
+                    1,
+                    r"C:\Users\x\Documents\report.txt",
+                    1_000 + index,
+                ),
+                |_| None,
+            );
+        }
+        assert!(
+            last.iter().any(|hit| hit.id == "behaviour/mass-document-rename"),
+            "{last:?}"
+        );
+    }
+
+    #[test]
+    fn renames_and_a_shadow_deletion_together_are_a_ransomware_shape() {
+        let mut staging = Staging::new();
+        for index in 0..25u64 {
+            staging.observe(
+                &event(
+                    Action::FileRenamed,
+                    10,
+                    1,
+                    r"C:\Users\x\Documents\report.txt",
+                    1_000 + index,
+                ),
+                |_| None,
+            );
+        }
+        let mut shadow = event(
+            Action::ProcessStarted,
+            11,
+            10,
+            r"C:\Windows\System32\cmd.exe",
+            2_000,
+        );
+        shadow.command_line = Some(r"cmd /c echo vssadmin delete shadows /all /quiet".to_string());
+        let hits = staging.observe(&shadow, |_| None);
+        assert!(
+            hits.iter().any(|hit| hit.id == "behaviour/ransomware-shape"),
+            "{hits:?}"
+        );
     }
 
     #[test]

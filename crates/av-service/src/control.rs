@@ -205,13 +205,29 @@ pub fn serve_on(host: Host, stop: &AtomicBool, name: &str) -> Result<Host, Servi
                 // the host on 2026-11-14, sixteen of them in a row stopped the
                 // service mid-session. Anything else is a broken pipe and is
                 // counted as before.
-                if !client_flap(&error) {
+                let flap = client_flap(&error);
+                if !flap {
                     failures += 1;
                 }
                 if !should_retry_connect(failures) {
                     return Err(error);
                 }
-                log::warn!("a client could not be connected ({failures} in a row): {error}");
+                // A flap is one-request client behaviour and happens many times
+                // a second when a front end polls; warning about each one filled
+                // the log faster than the service could write it (measured on
+                // 2026-11-14: hundreds of thousands of lines in seconds, with
+                // `0 in a row` on every one). The broken case keeps its warning.
+                if flap {
+                    log::debug!("a client came and went before the pipe accepted it: {error}");
+                    // This branch used to fall through to the refresh and the
+                    // poll sleep below, and with a client that connects and
+                    // leaves continuously that produced four hundred lines a
+                    // second and a control loop that spent its time recreating
+                    // the pipe. Measured on the host on 2026-11-14.
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                } else {
+                    log::warn!("a client could not be connected ({failures} in a row): {error}");
+                }
                 // A connect that failed can be the abandoned state itself —
                 // `ERROR_NO_DATA` is precisely "the client arrived and left
                 // before `ConnectNamedPipe` was called" — and the instance is
