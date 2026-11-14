@@ -247,6 +247,9 @@ pub struct Host {
     /// it. Filled from the process starts the driver reported; a process that
     /// started before the service was listening is class 8, "not known".
     behaviour_images: std::collections::HashMap<u32, u8>,
+    /// The two detectors that need the relation between two events: a written
+    /// file that is then started, and a document that starts a script host.
+    staging: av_behaviour::Staging,
     /// The paths the user has allowed, shared with the filter-port thread.
     ///
     /// Held here because this is the thread that hears the user: a decision
@@ -494,6 +497,7 @@ impl Host {
             behaviour_log: crate::behaviour_log::from_environment(),
             behaviour_last: std::collections::HashMap::new(),
             behaviour_images: std::collections::HashMap::new(),
+            staging: av_behaviour::Staging::new(),
             allow,
             vault,
             taken: HashMap::new(),
@@ -1872,6 +1876,39 @@ impl Host {
                             "pid {} started with no readable command line; command-line rules cannot fire for it",
                             event.process_id
                         ),
+                    }
+                }
+                // The two detectors that read two events together. They run
+                // after the command line is attached, because a script run as
+                // `powershell -File payload.ps1` starts `powershell.exe`, not
+                // `payload.ps1` -- the written path is in the command line and
+                // nowhere else. Measured on the host on 2026-11-14: evaluated
+                // before the attachment, the detector produced no hit for a
+                // family that writes a script and runs it.
+                {
+                    if record.action == av_behaviour::Action::ProcessStarted {
+                        log::debug!(
+                            "staging: start {} (pid {}, parent {}) cmd={:?}",
+                            record.path.as_deref().unwrap_or(""),
+                            record.process_id,
+                            record.parent_process_id,
+                            record
+                                .command_line
+                                .as_deref()
+                                .map(|line| line.chars().take(120).collect::<String>())
+                        );
+                    }
+                    let images = &self.behaviour_images;
+                    let hits = self.staging.observe(&record, |pid| images.get(&pid).copied());
+                    for hit in hits {
+                        log::warn!(
+                            "behaviour: {} (pid {}, score {}): {} {}",
+                            hit.id,
+                            record.process_id,
+                            hit.score,
+                            hit.path,
+                            hit.description
+                        );
                     }
                 }
                 self.behaviour.observe(&record)

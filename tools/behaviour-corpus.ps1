@@ -47,6 +47,20 @@ Start-Sleep -Milliseconds 200
 Remove-Item -Path $root -Recurse -Force
 '@
 
+$families['staged_dropper'] = @'
+# The shape D1 exists for: write a script into a user-writable directory and
+# run it. The script only prints, so the family is harmless; the writing and the
+# starting are the behaviour.
+$root = Join-Path $env:TEMP 'corpus-staged'
+New-Item -ItemType Directory -Path $root -Force | Out-Null
+$payload = Join-Path $root 'stage1.ps1'
+Set-Content -Path $payload -Value 'Write-Output harmless'
+Start-Sleep -Milliseconds 300
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $payload | Out-Null
+Start-Sleep -Milliseconds 300
+Remove-Item -Path $root -Recurse -Force
+'@
+
 $families['persistence_run'] = @'
 $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 Set-ItemProperty -Path $key -Name 'CorpusUpdater' -Value 'C:\Windows\System32\cmd.exe /c echo x'

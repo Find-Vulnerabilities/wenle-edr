@@ -82,6 +82,7 @@ mod error;
 mod event;
 mod model;
 mod sequence;
+mod staging;
 
 pub use dsl::{Action, Detail, Precision, Response, Rule, RuleSet, Subject};
 pub use engine::AGREEMENT_RULE_ID;
@@ -90,6 +91,7 @@ pub use error::LoadError;
 pub use event::Record;
 pub use model::Model;
 pub use sequence::{image_class, Features, Story, LENGTH, WIDTH};
+pub use staging::{Hit, Staging};
 
 /// The rules shipped with the product, embedded in the binary.
 ///
