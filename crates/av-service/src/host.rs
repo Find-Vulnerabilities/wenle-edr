@@ -214,6 +214,36 @@ fn behaviour_engine() -> av_behaviour::Engine {
     engine
 }
 
+/// Load the sequence model, when one is installed.
+///
+/// From `WENLE_BEHAVIOUR_MODEL`, or `%ProgramData%\WenleAV\models\behaviour.bin`
+/// when that file exists. A model that does not parse is not loaded and says so;
+/// a service that refused to start because a diagnostic file was the wrong shape
+/// would be trading a working product for a log line.
+fn behaviour_model_from_environment() -> Option<av_behaviour::Model> {
+    let path = std::env::var_os("WENLE_BEHAVIOUR_MODEL")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(r"C:\ProgramData\WenleAV\models\behaviour.bin")
+        });
+    let Ok(bytes) = std::fs::read(&path) else {
+        return None;
+    };
+    match av_behaviour::Model::load(&bytes) {
+        Some(model) => {
+            log::info!("behaviour sequence model loaded from {}", path.display());
+            Some(model)
+        }
+        None => {
+            log::warn!(
+                "the behaviour model at {} is not one this build can read",
+                path.display()
+            );
+            None
+        }
+    }
+}
+
 /// The service's state.
 #[derive(Debug)]
 pub struct Host {
@@ -247,6 +277,15 @@ pub struct Host {
     /// it. Filled from the process starts the driver reported; a process that
     /// started before the service was listening is class 8, "not known".
     behaviour_images: std::collections::HashMap<u32, u8>,
+    /// The sequence model, when one is installed.
+    ///
+    /// Report-only and deliberately so: measured on 2026-11-14 it reached AUC
+    /// 0.99 and 15 % recall at 0.1 % false positives on this machine's own
+    /// corpus, and 0.2 % transfer from public captures. A model that good at
+    /// ranking and that bad at deciding must not decide.
+    behaviour_model: Option<av_behaviour::Model>,
+    /// Each process's recent events, for the sequence model.
+    behaviour_stories: std::collections::HashMap<u32, Vec<av_behaviour::Features>>,
     /// The two detectors that need the relation between two events: a written
     /// file that is then started, and a document that starts a script host.
     staging: av_behaviour::Staging,
@@ -497,6 +536,8 @@ impl Host {
             behaviour_log: crate::behaviour_log::from_environment(),
             behaviour_last: std::collections::HashMap::new(),
             behaviour_images: std::collections::HashMap::new(),
+            behaviour_model: behaviour_model_from_environment(),
+            behaviour_stories: std::collections::HashMap::new(),
             staging: av_behaviour::Staging::new(),
             allow,
             vault,
@@ -1841,30 +1882,62 @@ impl Host {
                 // service's addition and the rules are what read it. The gap is
                 // measured here rather than in the trainer so that the numbers in
                 // the file are the numbers the model will be served.
+                let previous = self
+                    .behaviour_last
+                    .entry(record.process_id)
+                    .or_insert(record.timestamp);
+                let gap = record.timestamp.saturating_sub(*previous);
+                *previous = record.timestamp;
+                if record.action == av_behaviour::Action::ProcessStarted {
+                    self.behaviour_images.insert(
+                        record.process_id,
+                        av_behaviour::image_class(record.path.as_deref()),
+                    );
+                }
+                let image = self
+                    .behaviour_images
+                    .get(&record.process_id)
+                    .copied()
+                    .unwrap_or(8) as f32;
+                let parent = self
+                    .behaviour_images
+                    .get(&record.parent_process_id)
+                    .copied()
+                    .unwrap_or(8) as f32;
+                let features = av_behaviour::Features::of(&record, gap, image, parent);
                 if let Some(log) = self.behaviour_log.as_mut() {
-                    let previous = self
-                        .behaviour_last
-                        .insert(record.process_id, record.timestamp)
-                        .unwrap_or(record.timestamp);
-                    let gap = record.timestamp.saturating_sub(previous);
-                    if record.action == av_behaviour::Action::ProcessStarted {
-                        self.behaviour_images.insert(
-                            record.process_id,
-                            av_behaviour::image_class(record.path.as_deref()),
-                        );
-                    }
-                    let image = self
-                        .behaviour_images
-                        .get(&record.process_id)
-                        .copied()
-                        .unwrap_or(8) as f32;
-                    let parent = self
-                        .behaviour_images
-                        .get(&record.parent_process_id)
-                        .copied()
-                        .unwrap_or(8) as f32;
-                    let features = av_behaviour::Features::of(&record, gap, image, parent);
                     log.record(&record, &features);
+                }
+                // The sequence model, when one is installed: every eighth event
+                // of a story is scored, which is often enough to catch a burst
+                // and cheap enough not to score on every write of a build.
+                if let Some(model) = self.behaviour_model.as_ref() {
+                    if self.behaviour_stories.len() > 4096 {
+                        // One entry per process, and the map is not pruned when a
+                        // process ends (the driver does not report every end);
+                        // clearing on overflow keeps memory bounded and costs one
+                        // story's history.
+                        self.behaviour_stories.clear();
+                    }
+                    let story = self
+                        .behaviour_stories
+                        .entry(record.process_id)
+                        .or_default();
+                    story.push(features);
+                    if story.len() > av_behaviour::LENGTH {
+                        story.remove(0);
+                    }
+                    if story.len() % 8 == 0 {
+                        let score = model.score(story);
+                        if score >= 0.995 {
+                            log::warn!(
+                                "behaviour: sequence model scored {:.3} for pid {} ({})",
+                                score,
+                                record.process_id,
+                                record.path.as_deref().unwrap_or("")
+                            );
+                        }
+                    }
                 }
                 if event.action == DriverEventAction::ProcessStarted {
                     match event.command_line.as_deref() {
