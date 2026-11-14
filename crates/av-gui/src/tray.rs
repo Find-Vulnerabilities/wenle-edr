@@ -82,6 +82,8 @@ pub enum Command {
     Scan,
     /// Show the window on the Quarantine tab.
     Quarantine,
+    /// Download, verify and install the rule database.
+    Rules,
     /// Stop the process.
     ///
     /// The one command here that is not "show the window". A window that puts
@@ -97,10 +99,11 @@ impl Command {
     /// a command added here is in the menu and has an identifier, and one that
     /// is not here has neither. Two hand-written lists that have to agree is
     /// exactly the drift this avoids.
-    pub const ALL: [Command; 4] = [
+    pub const ALL: [Command; 5] = [
         Command::Open,
         Command::Scan,
         Command::Quarantine,
+        Command::Rules,
         Command::Exit,
     ];
 
@@ -110,10 +113,11 @@ impl Command {
     /// `Exit` is under the rule on purpose. A tray menu is a list a user reads
     /// while aiming at one line, and the only line here that stops their
     /// protection is the one that should not be a slip away from the others.
-    pub const MENU: [Entry; 5] = [
+    pub const MENU: [Entry; 6] = [
         Entry::Item(Command::Open),
         Entry::Item(Command::Scan),
         Entry::Item(Command::Quarantine),
+        Entry::Item(Command::Rules),
         Entry::Separator,
         Entry::Item(Command::Exit),
     ];
@@ -124,6 +128,7 @@ impl Command {
             Command::Open => "Open Wenle AV",
             Command::Scan => "Scan a folder…",
             Command::Quarantine => "Quarantine…",
+            Command::Rules => "Update the rule database",
             Command::Exit => "Exit",
         }
     }
@@ -139,6 +144,7 @@ impl Command {
             Command::Open => "show the window",
             Command::Scan => "show the window and pick something to scan",
             Command::Quarantine => "show the window on the quarantine list",
+            Command::Rules => "download and install the rule database",
             Command::Exit => "stop the program",
         }
     }

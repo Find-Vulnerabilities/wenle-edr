@@ -574,6 +574,22 @@ impl GuiApp {
                     self.show_window(ctx);
                     self.tab = Tab::Quarantine;
                 }
+                TrayCommand::Rules => {
+                    // The command line does the work: it fetches the release,
+                    // checks it against the digest GitHub publishes, compiles
+                    // it, and stops this service while the database it has open
+                    // is replaced. Run detached, so the window is not frozen for
+                    // the length of a compile.
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                    if let Ok(own) = std::env::current_exe() {
+                        let cli = own.with_file_name("wenle.exe");
+                        let _ = std::process::Command::new(cli)
+                            .args(["rules", "update"])
+                            .creation_flags(CREATE_NO_WINDOW)
+                            .spawn();
+                    }
+                }
                 TrayCommand::Exit => {
                     // The flag first, because the close it asks for is answered
                     // by the frame after this one — see
