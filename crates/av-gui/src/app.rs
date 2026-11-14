@@ -1166,6 +1166,14 @@ impl GuiApp {
         // they are already true, so the two together are right for every state
         // the window can be in. See [`GuiApp::show_window`] for why there is no
         // third command.
+        // Visible first, and it is the one that was missing. The window puts
+        // itself away into the notification area instead of closing, and a
+        // hidden viewport is neither minimised nor unfocused — it is not on
+        // screen at all — so the two commands below did nothing to it and a
+        // double-click on the desktop looked like it had failed. Measured on
+        // the host on 2026-11-14: four processes, one window, and every click
+        // after the first one silent.
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         for wake in wakes {

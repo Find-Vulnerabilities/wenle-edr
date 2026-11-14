@@ -155,7 +155,17 @@ pub struct ScanRequest {
     ///
     /// Ignored when the options do not enable trust at all.
     pub catalog: bool,
-    /// Worker threads. `0` means one per core.
+    /// Worker threads. `0` means the bounded default, not one per core.
+    ///
+    /// # Why the bound
+    ///
+    /// The window used to take `0` literally, so a machine with sixteen cores
+    /// ran sixteen workers. Measured on the host on 2026-11-14: a scan of a
+    /// large tree held 80 % of the processor and about a gigabyte, the window
+    /// stayed busy long enough that ending it from Task Manager looked like it
+    /// did nothing, and what followed was slow enough to look broken. Four
+    /// workers is where a scan stays ahead of the disk without taking the
+    /// machine, and the extra workers were not making it finish sooner.
     pub threads: usize,
     /// Directories that are never scanned, from the configuration.
     pub excluded_paths: Vec<PathBuf>,
@@ -184,10 +194,24 @@ impl ScanRequest {
             thresholds: config.scanning.thresholds,
             catalog: options.trust,
             options,
-            threads: config.scanning.threads,
+            threads: bounded_workers(config.scanning.threads),
             excluded_paths: config.general.exclusions.clone(),
             protected: paths,
         }
+    }
+}
+
+/// How many scan workers a configured count means.
+///
+/// `0` is "decide for me", and the decision is four: one worker per core was
+/// measured to cost the machine its processor and its memory without finishing
+/// a large tree sooner. A configured count above four is clamped for the same
+/// reason; a scan that takes the computer is not a scan a user runs twice.
+pub fn bounded_workers(configured: usize) -> usize {
+    const CEILING: usize = 4;
+    match configured {
+        0 => CEILING.min(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)),
+        n => n.clamp(1, CEILING),
     }
 }
 

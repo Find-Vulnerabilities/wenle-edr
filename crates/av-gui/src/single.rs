@@ -343,8 +343,45 @@ fn claim_on_windows(data_dir: &Path, scan: Option<&Path>) -> Claim {
         let _ = windows::Win32::Foundation::CloseHandle(mutex);
     }
     wake_existing(data_dir, scan);
+    restore_window();
     Claim::AlreadyRunning
 }
+
+/// Restore the running window, if the wake did not.
+///
+/// The wake asks the window to raise itself, and on the machine this was
+/// measured on (2026-11-14) a minimised window did not act on it: the second
+/// launch exited, one instance remained, and the window stayed minimised. A
+/// second launch that says nothing happened is worse than one that raises the
+/// window and does nothing else, so the launch also restores it directly; that
+/// does not depend on the first process receiving a frame.
+#[cfg(windows)]
+fn restore_window() {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        FindWindowW, IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE,
+    };
+
+    let title = to_wide("Wenle AV");
+    // SAFETY: the title is NUL-terminated and outlives the call, and a null
+    // class name asks for any window carrying that title.
+    let window = unsafe { FindWindowW(PCWSTR::null(), PCWSTR(title.as_ptr())) };
+    let Ok(window) = window else {
+        return;
+    };
+    // SAFETY: the handle came from the call above and is used for two calls
+    // that only need a window handle. Both are no-ops on a window that is
+    // already on screen and in front.
+    unsafe {
+        if IsIconic(window).as_bool() {
+            let _ = ShowWindow(window, SW_RESTORE);
+        }
+        let _ = SetForegroundWindow(window);
+    }
+}
+
+#[cfg(not(windows))]
+fn restore_window() {}
 
 /// Tell the running window what this launch wanted.
 #[cfg(windows)]
