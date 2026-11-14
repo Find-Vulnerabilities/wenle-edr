@@ -80,12 +80,14 @@ mod dsl;
 mod engine;
 mod error;
 mod event;
+mod sequence;
 
 pub use dsl::{Action, Detail, Precision, Response, Rule, RuleSet, Subject};
 pub use engine::AGREEMENT_RULE_ID;
 pub use engine::{Engine, Finding, TICKS_PER_SECOND};
 pub use error::LoadError;
 pub use event::Record;
+pub use sequence::{Features, Story, LENGTH, WIDTH};
 
 /// The rules shipped with the product, embedded in the binary.
 ///
