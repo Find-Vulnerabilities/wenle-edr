@@ -243,6 +243,10 @@ pub struct Host {
     behaviour_log: Option<crate::behaviour_log::BehaviourLog>,
     /// When each process was last heard from, so a story's gap is real.
     behaviour_last: std::collections::HashMap<u32, u64>,
+    /// What kind of program each live process is, so an event can say who did
+    /// it. Filled from the process starts the driver reported; a process that
+    /// started before the service was listening is class 8, "not known".
+    behaviour_images: std::collections::HashMap<u32, u8>,
     /// The paths the user has allowed, shared with the filter-port thread.
     ///
     /// Held here because this is the thread that hears the user: a decision
@@ -489,6 +493,7 @@ impl Host {
             behaviour: behaviour_engine(),
             behaviour_log: crate::behaviour_log::from_environment(),
             behaviour_last: std::collections::HashMap::new(),
+            behaviour_images: std::collections::HashMap::new(),
             allow,
             vault,
             taken: HashMap::new(),
@@ -1838,7 +1843,23 @@ impl Host {
                         .insert(record.process_id, record.timestamp)
                         .unwrap_or(record.timestamp);
                     let gap = record.timestamp.saturating_sub(previous);
-                    let features = av_behaviour::Features::of(&record, gap);
+                    if record.action == av_behaviour::Action::ProcessStarted {
+                        self.behaviour_images.insert(
+                            record.process_id,
+                            av_behaviour::image_class(record.path.as_deref()),
+                        );
+                    }
+                    let image = self
+                        .behaviour_images
+                        .get(&record.process_id)
+                        .copied()
+                        .unwrap_or(8) as f32;
+                    let parent = self
+                        .behaviour_images
+                        .get(&record.parent_process_id)
+                        .copied()
+                        .unwrap_or(8) as f32;
+                    let features = av_behaviour::Features::of(&record, gap, image, parent);
                     log.record(&record, &features);
                 }
                 if event.action == DriverEventAction::ProcessStarted {

@@ -29,7 +29,7 @@ import sys
 
 import numpy as np
 
-WIDTH = 33
+WIDTH = 35
 LENGTH = 64
 HIDDEN = 32
 MAX_GAP_US = 5_000_000

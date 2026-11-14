@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn a_line_carries_the_identity_and_the_width_of_features() {
         let record = record();
-        let features = Features::of(&record, 0);
+        let features = Features::of(&record, 0, 8.0, 8.0);
         let line = line(&record, &features);
         let fields: Vec<&str> = line.trim_end().split(' ').collect();
         assert_eq!(fields[0], "42");
@@ -213,7 +213,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let path = dir.path().join("behaviour.log");
         let record = record();
-        let features = Features::of(&record, 0);
+        let features = Features::of(&record, 0, 8.0, 8.0);
         let mut log = BehaviourLog::open(&path, 200).expect("the log opens");
         for _ in 0..40 {
             log.record(&record, &features);
