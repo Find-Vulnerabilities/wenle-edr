@@ -145,6 +145,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod allow;
+pub mod behaviour_log;
 pub mod config;
 pub mod control;
 pub mod driver;

@@ -233,6 +233,16 @@ pub struct Host {
     /// never a decision; see [`Host::observe_behaviour`], which is where the
     /// shape of that is argued.
     behaviour: av_behaviour::Engine,
+    /// The behaviour events written down for training a sequence model.
+    ///
+    /// `None` unless `WENLE_BEHAVIOUR_LOG` named a file at start-up. A
+    /// diagnostic that is off by default and cannot be turned on from a
+    /// configuration an attacker can edit is the shape this needs: the log is
+    /// evidence about ordinary work, and evidence about ordinary work is a
+    /// target.
+    behaviour_log: Option<crate::behaviour_log::BehaviourLog>,
+    /// When each process was last heard from, so a story's gap is real.
+    behaviour_last: std::collections::HashMap<u32, u64>,
     /// The paths the user has allowed, shared with the filter-port thread.
     ///
     /// Held here because this is the thread that hears the user: a decision
@@ -477,6 +487,8 @@ impl Host {
             loaded,
             engine,
             behaviour: behaviour_engine(),
+            behaviour_log: crate::behaviour_log::from_environment(),
+            behaviour_last: std::collections::HashMap::new(),
             allow,
             vault,
             taken: HashMap::new(),
@@ -1815,6 +1827,20 @@ impl Host {
         // twice.
         let findings = match av_behaviour::Record::from_driver(event) {
             Some(mut record) => {
+                // Written before the command line is attached, because a story is
+                // about the event the driver reported; the command line is this
+                // service's addition and the rules are what read it. The gap is
+                // measured here rather than in the trainer so that the numbers in
+                // the file are the numbers the model will be served.
+                if let Some(log) = self.behaviour_log.as_mut() {
+                    let previous = self
+                        .behaviour_last
+                        .insert(record.process_id, record.timestamp)
+                        .unwrap_or(record.timestamp);
+                    let gap = record.timestamp.saturating_sub(previous);
+                    let features = av_behaviour::Features::of(&record, gap);
+                    log.record(&record, &features);
+                }
                 if event.action == DriverEventAction::ProcessStarted {
                     match event.command_line.as_deref() {
                         Some(command_line) => record.set_command_line(command_line),
