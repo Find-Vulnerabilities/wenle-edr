@@ -2563,6 +2563,15 @@ impl Host {
             .engine
             .engine
             .scan_bytes(Path::new(name), data, &options);
+        // What an AMSI host was told, and the only record of content that was
+        // examined before it ran. Without this line a provider that answers
+        // "no opinion" and a provider that was never called look the same.
+        log::debug!(
+            "buffer scan of {name}: {:?} ({} bytes, {} detections)",
+            report.verdict(),
+            data.len(),
+            report.assessment.detections.len()
+        );
 
         let mut events = Vec::new();
         if report.is_detection() {

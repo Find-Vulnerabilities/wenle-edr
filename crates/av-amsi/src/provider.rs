@@ -228,17 +228,17 @@ impl Provider_Impl {
     /// Split out so that the guarded section is one line and there is no way to
     /// add a path that skips it.
     fn examine(&self, stream: &IAmsiStream) -> AMSI_RESULT {
-        let Some(size) = read_content_size(stream) else {
-            // No size means no way to allocate, which means nothing can be
-            // read. Answering from the engine about zero bytes would produce a
-            // `Clean` verdict for content that was never looked at, and while
-            // `for_verdict` turns that into `NOT_DETECTED` rather than `CLEAN`,
-            // there is no reason to spend a pipe round trip arriving at it.
-            log::warn!("AMSI content size could not be read; nothing was examined");
-            return no_opinion();
-        };
         let name = read_content_name(stream);
-        let data = read_content(stream, size);
+        // The size attribute is the documented way to allocate before reading,
+        // and it is not trusted here: measured on the host on 2026-11-14, a
+        // provider that asked for the size got zero back and every script was
+        // examined as zero bytes -- "clean" about content it had never read.
+        // Reading until the stream says there is nothing more does not depend
+        // on that answer being right.
+        let data = match read_content_size(stream) {
+            Some(size) if size > 0 => read_content(stream, size),
+            _ => read_all(stream),
+        };
 
         let scan = self.scanner.scan(&name, &data);
         let verdict = scan.verdict();
@@ -269,7 +269,11 @@ impl Provider_Impl {
 /// wrong length followed by a read into it.
 fn read_content_size(stream: &IAmsiStream) -> Option<u64> {
     let mut buffer = [0u8; 8];
-    let mut returned = 0u32;
+    // The size parameter is in/out: the buffer's length going in, the bytes
+    // written coming out. Zero going in is a zero-byte buffer, which is how
+    // this used to read every script as empty and answer "clean" about
+    // content it had never seen -- measured on 2026-11-14.
+    let mut returned = buffer.len() as u32;
     // SAFETY: `buffer` and `returned` are locals that outlive the call, and the
     // buffer's length is what the signature passes to the provider.
     let result = unsafe { stream.GetAttribute(AMSI_ATTRIBUTE_CONTENT_SIZE, &mut buffer, &mut returned) };
@@ -294,7 +298,8 @@ fn read_content_size(stream: &IAmsiStream) -> Option<u64> {
 /// report; content with a name that could not be read is still content.
 fn read_content_name(stream: &IAmsiStream) -> String {
     let mut buffer = vec![0u8; MAX_NAME_BYTES];
-    let mut returned = 0u32;
+    // In/out, as above: the capacity going in, the bytes written coming out.
+    let mut returned = buffer.len() as u32;
     // SAFETY: as in `read_content_size`.
     let result =
         unsafe { stream.GetAttribute(AMSI_ATTRIBUTE_CONTENT_NAME, &mut buffer, &mut returned) };
@@ -356,6 +361,36 @@ fn read_content(stream: &IAmsiStream, size: u64) -> Vec<u8> {
         );
     }
     data.truncate(filled);
+    data
+}
+
+/// Read the stream until it says there is nothing left.
+///
+/// The fallback for a host that will not say how large its content is, and the
+/// reason a script is examined at all when the size attribute comes back zero.
+/// `Read` takes an offset and a buffer; a read that returns no bytes is the end.
+fn read_all(stream: &IAmsiStream) -> Vec<u8> {
+    const CHUNK: usize = 64 * 1024;
+    let mut data: Vec<u8> = Vec::new();
+    let mut chunk = vec![0u8; CHUNK];
+    while data.len() < MAX_CONTENT_BYTES as usize {
+        let mut read = 0u32;
+        // SAFETY: the sub-buffer outlives the call and its length is what the
+        // signature passes to the provider; `read` is a `u32` on this stack.
+        let result = unsafe { stream.Read(data.len() as u64, &mut chunk, &mut read) };
+        match result {
+            Ok(()) if read == 0 => break,
+            Ok(()) => {
+                let take = (read as usize).min(chunk.len());
+                data.extend_from_slice(&chunk[..take]);
+            }
+            Err(error) => {
+                log::warn!("AMSI content read stopped at {} bytes: {error}", data.len());
+                break;
+            }
+        }
+    }
+    data.truncate(MAX_CONTENT_BYTES as usize);
     data
 }
 
