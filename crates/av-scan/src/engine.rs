@@ -450,10 +450,31 @@ impl ScanEngine {
         });
 
         // -- heuristics ------------------------------------------------------
-        let heuristic_detections = match options.heuristics {
+        // Two different costs live here, and they are gated separately. The PE
+        // table walk is why `options.heuristics` exists at all: it is off at the
+        // gate, where a file-open hook cannot afford to read a section table.
+        // Script text is not that cost — it is substring matching over at most
+        // the examined prefix — so it does not ride on that switch. It has to
+        // not: the real-time path runs with `heuristics: false`, and a gate
+        // that could not read a script would let every dropper through. Measured
+        // on 2026-11-14: with the reading inside the switch, writing a
+        // ransomware-shaped `.ps1` produced no quarantine and running it wrote
+        // its marker.
+        //
+        // A `.psd1` is a manifest: a list of names and metadata, not code. Its
+        // text contains cmdlet names — `Invoke-Expression` among them — and
+        // reading those as calls convicted Microsoft.PowerShell.Utility's own
+        // manifest on 2026-11-14, so manifests are read by nothing here.
+        let mut heuristic_detections = match options.heuristics {
             true => heuristics::evaluate(examined, image.as_ref(), &self.heuristics),
             false => Vec::new(),
         };
+        if !path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("psd1"))
+        {
+            heuristic_detections.extend(crate::script::assess(kind, examined));
+        }
 
         // -- archives --------------------------------------------------------
         // Runs over the whole file and not over `examined`. A size cap is about

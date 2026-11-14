@@ -57,6 +57,7 @@ pub mod heuristics;
 pub mod kind;
 pub mod own;
 pub mod rules;
+pub mod script;
 pub mod trust;
 
 pub use blocklist::{BlockHit, Blocklist};
