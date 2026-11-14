@@ -28,18 +28,20 @@ gate that says nothing.
 The product ships no static rules. Rules are other people's work under other
 people's licences, and this repository distributes code only.
 
-Two ways to give it rules:
+`wenle rules update` fetches the newest YARA-Forge extended package, checks it
+against the SHA-256 GitHub publishes for that release asset, compiles it with the
+same compiler `wenle build` uses, and installs the result where the service reads
+it. The previous database is kept as `rules.avdb.before-feed`. `wenle rules
+status` shows what is installed, what is published, and whether the database on
+disk still matches the digest recorded when it was installed. `wenle rules auto
+on` lets the service keep it current once a week.
 
-- **Your own.** `wenle build <file.yar>` compiles YARA sources (`.yar`, `.yara`)
-  or this product's `.avrule` syntax into the database the engine reads.
-  `wenle build --report` says which constructs were refused and why.
-- **YARA-Forge.** `tools/fetch-rules.ps1` downloads the tier you choose (core,
-  extended or full), compiles it, and puts the database where the service expects
-  it. Run it elevated, once, after installing.
+The digest is the release's own, not one this program computes: a hash of a
+download that could have been replaced proves nothing, and GitHub's asset digest
+is the one reference the download cannot change.
 
 Without a database the engine still starts and finds nothing; `wenle service
 status` says so rather than calling every file clean.
-
 ## Behaviour
 
 68 rules over file, registry and process events. Each one scores below the

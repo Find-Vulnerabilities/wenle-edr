@@ -495,7 +495,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "av-amsi"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "av-core",
  "av-ipc",
@@ -508,7 +508,7 @@ dependencies = [
 
 [[package]]
 name = "av-archive"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "av-core",
  "crc32fast",
@@ -520,7 +520,7 @@ dependencies = [
 
 [[package]]
 name = "av-authenticode"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "av-pe",
  "av-signatures",
@@ -532,7 +532,7 @@ dependencies = [
 
 [[package]]
 name = "av-behaviour"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "av-core",
  "av-driver-proto",
@@ -545,7 +545,7 @@ dependencies = [
 
 [[package]]
 name = "av-cli"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "av-archive",
@@ -583,7 +583,7 @@ dependencies = [
 
 [[package]]
 name = "av-core"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "chrono",
  "dirs",
@@ -603,11 +603,11 @@ dependencies = [
 
 [[package]]
 name = "av-driver-proto"
-version = "1.0.0"
+version = "1.0.1"
 
 [[package]]
 name = "av-fs"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "av-core",
  "log",
@@ -619,7 +619,7 @@ dependencies = [
 
 [[package]]
 name = "av-guard"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "av-authenticode",
  "av-core",
@@ -635,7 +635,7 @@ dependencies = [
 
 [[package]]
 name = "av-gui"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "av-archive",
  "av-core",
@@ -664,7 +664,7 @@ dependencies = [
 
 [[package]]
 name = "av-integration"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "av-amsi",
  "av-core",
@@ -678,7 +678,7 @@ dependencies = [
 
 [[package]]
 name = "av-ipc"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "av-core",
  "av-quarantine",
@@ -692,7 +692,7 @@ dependencies = [
 
 [[package]]
 name = "av-memory"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "av-core",
  "av-driver-proto",
@@ -707,14 +707,14 @@ dependencies = [
 
 [[package]]
 name = "av-patterns"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "memchr",
 ]
 
 [[package]]
 name = "av-pe"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "md-5",
  "thiserror 2.0.20",
@@ -722,7 +722,7 @@ dependencies = [
 
 [[package]]
 name = "av-quarantine"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "aes-gcm",
  "av-core",
@@ -738,7 +738,7 @@ dependencies = [
 
 [[package]]
 name = "av-quickscan"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "av-core",
  "av-rules",
@@ -747,7 +747,7 @@ dependencies = [
 
 [[package]]
 name = "av-realtime"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "av-core",
  "av-integration",
@@ -767,7 +767,7 @@ dependencies = [
 
 [[package]]
 name = "av-rules"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "aho-corasick",
  "av-core",
@@ -792,7 +792,7 @@ dependencies = [
 
 [[package]]
 name = "av-sandbox"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "av-core",
  "av-pe",
@@ -803,7 +803,7 @@ dependencies = [
 
 [[package]]
 name = "av-scan"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "av-archive",
  "av-authenticode",
@@ -819,7 +819,7 @@ dependencies = [
 
 [[package]]
 name = "av-service"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "av-amsi",
@@ -849,7 +849,7 @@ dependencies = [
 
 [[package]]
 name = "av-signatures"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "av-pe",
  "log",
