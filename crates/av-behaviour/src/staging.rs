@@ -91,12 +91,15 @@ pub struct Staging {
     order: VecDeque<String>,
     /// Document renames per process, so a burst can be counted.
     renames: HashMap<u32, VecDeque<u64>>,
-    /// When a Run key was written, and when a task or service install command
-    /// was seen. Persistence is one act in two halves.
-    run_key_at: Option<u64>,
-    task_at: Option<u64>,
+    /// The Run key and the task/service command, each with the process that
+    /// wrote it. Persistence is one act in two halves, and the halves belong to
+    /// one process: measured on 2026-11-14, a machine-wide window let one
+    /// family's task install pair with the next family's Run key and reported a
+    /// persistence event for neither.
+    run_key_at: Option<(u64, u32)>,
+    task_at: Option<(u64, u32)>,
     /// When a recovery-destroying command line was seen.
-    shadow_at: Option<u64>,
+    shadow_at: Option<(u64, u32)>,
 }
 
 impl Staging {
@@ -197,9 +200,12 @@ impl Staging {
                     if lower.contains("schtasks") && lower.contains("/create")
                         || lower.contains("sc ") && lower.contains(" create ")
                     {
-                        self.task_at = Some(record.timestamp);
-                        if let Some(when) = self.run_key_at {
-                            if record.timestamp.saturating_sub(when) <= 120 * crate::TICKS_PER_SECOND {
+                        self.task_at = Some((record.timestamp, record.process_id));
+                        if let Some((when, who)) = self.run_key_at {
+                            if who == record.process_id
+                                && record.timestamp.saturating_sub(when)
+                                    <= 120 * crate::TICKS_PER_SECOND
+                            {
                                 hits.push(Hit {
                                     id: "behaviour/persistence-arranged",
                                     score: 120,
@@ -213,11 +219,11 @@ impl Staging {
                         || lower.contains("wbadmin") && lower.contains("delete catalog")
                         || lower.contains("recoveryenabled no")
                     {
-                        self.shadow_at = Some(record.timestamp);
+                        self.shadow_at = Some((record.timestamp, record.process_id));
                         let recent_renames = self
                             .renames
-                            .values()
-                            .any(|queue| queue.len() >= 20);
+                            .get(&record.process_id)
+                            .is_some_and(|queue| queue.len() >= 20);
                         if recent_renames {
                             hits.push(Hit {
                                 id: "behaviour/ransomware-shape",
@@ -280,12 +286,15 @@ impl Staging {
                 if let Some(path) = record.path.as_deref() {
                     let lower = path.to_ascii_lowercase();
                     if lower.contains("currentversion\\run") {
-                        self.run_key_at = Some(record.timestamp);
+                        self.run_key_at = Some((record.timestamp, record.process_id));
                         // Persistence is two halves: the key is written and
                         // something is arranged to act on it. One half alone is
                         // what every installer does.
-                        if let Some(when) = self.task_at {
-                            if record.timestamp.saturating_sub(when) <= 120 * crate::TICKS_PER_SECOND {
+                        if let Some((when, who)) = self.task_at {
+                            if who == record.process_id
+                                && record.timestamp.saturating_sub(when)
+                                    <= 120 * crate::TICKS_PER_SECOND
+                            {
                                 hits.push(Hit {
                                     id: "behaviour/persistence-arranged",
                                     score: 120,
@@ -490,8 +499,8 @@ mod tests {
         staging.observe(&key, |_| None);
         let mut task = event(
             Action::ProcessStarted,
-            11,
             10,
+            1,
             r"C:\Windows\System32\schtasks.exe",
             5_000,
         );
@@ -557,8 +566,8 @@ mod tests {
         }
         let mut shadow = event(
             Action::ProcessStarted,
-            11,
             10,
+            1,
             r"C:\Windows\System32\cmd.exe",
             2_000,
         );
