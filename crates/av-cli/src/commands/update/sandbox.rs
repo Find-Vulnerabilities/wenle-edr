@@ -150,6 +150,7 @@ pub fn run(
     install_dir: &Path,
     entries: &[Entry],
     script: &str,
+    db_dir: &Path,
 ) -> Result<Report> {
     // `ALL_SAFE` is everything that computes and nothing that reaches the
     // machine: `string`, `table`, `math`, `utf8`, `coroutine` and the base
@@ -243,6 +244,23 @@ pub fn run(
                     session.report.failures.push(message.clone());
                     Err(mlua::Error::RuntimeError(message))
                 }
+            }
+        })?,
+    )?;
+
+    // `update.rules()` installs the published rule database through the same
+    // code path `wenle rules update` uses. The script cannot download anything
+    // itself -- the sandbox has no `io`, no `os` and no network -- so this is
+    // the one shape a rule step can have: the script asks, the updater does.
+    let db = db_dir.to_path_buf();
+    api.set(
+        "rules",
+        lua.create_function(move |_, ()| {
+            match crate::commands::rules::install_feed(&db) {
+                Ok(()) => Ok(true),
+                Err(error) => Err(mlua::Error::RuntimeError(format!(
+                    "the rule database could not be updated: {error}"
+                ))),
             }
         })?,
     )?;
@@ -403,7 +421,7 @@ mod tests {
             assert(#names == 1, "one name")
             update.install(names[1])
         "#;
-        let report = run(&package, &install, &entries, script).expect("runs");
+        let report = run(&package, &install, &entries, script, &install).expect("runs");
         assert!(report.is_clean(), "{report:?}");
         assert_eq!(report.installed, vec!["wenle.exe".to_string()]);
         assert!(install.join("wenle.exe").exists());
@@ -421,7 +439,7 @@ mod tests {
             sha256: hash_file(&package.join("wenle.exe")).expect("hash"),
             name: "wenle.exe".to_string(),
         }];
-        let report = run(&package, &install, &entries, "update.install('evil.exe')");
+        let report = run(&package, &install, &entries, "update.install('evil.exe')", &install);
         let report = report.expect("the error is reported, not returned");
         assert!(!report.is_clean(), "{report:?}");
         assert!(report.installed.is_empty());
@@ -432,7 +450,13 @@ mod tests {
     fn the_sandbox_has_no_io_library() {
         let package = std::env::temp_dir().join(format!("wenle-lua-sb-{}", std::process::id()));
         std::fs::create_dir_all(&package).expect("temp dirs");
-        let report = run(&package, &package, &[], "io.open('C:/Windows/System32/drivers/x.sys','w')")
+        let report = run(
+            &package,
+            &package,
+            &[],
+            "io.open('C:/Windows/System32/drivers/x.sys','w')",
+            &package,
+        )
             .expect("runs");
         assert!(!report.is_clean(), "a script could open a file: {report:?}");
         assert!(

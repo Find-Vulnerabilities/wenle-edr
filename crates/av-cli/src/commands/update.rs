@@ -457,7 +457,7 @@ fn apply_command(dir: &Path, script: Option<&Path>, context: &Context) -> Result
         }
     }
 
-    let report = sandbox::run(dir, &install_dir, &entries, &text)?;
+    let report = sandbox::run(dir, &install_dir, &entries, &text, &context.paths.db_dir)?;
 
     if report.stopped && !report.started {
         output::warn("the script stopped the service and did not start it; starting it now");

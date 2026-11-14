@@ -216,7 +216,21 @@ fn update(
         short(&sha256_hex(&bytes))
     );
 
-    let rules = extract(&bytes)?;
+    install_package(&context.paths.db_dir, &bytes, &release, no_restart, dry_run)
+}
+
+/// Compile a verified package and put it where the service reads it.
+///
+/// Shared by the command line and by the update script's `update.rules()`
+/// step, so a script and a command line cannot install different things.
+pub(crate) fn install_package(
+    db_dir: &Path,
+    bytes: &[u8],
+    release: &str,
+    no_restart: bool,
+    dry_run: bool,
+) -> Result<Exit> {
+    let rules = extract(bytes)?;
     println!("  {} bytes of rule sources", rules.len());
 
     println!("Compiling");
@@ -226,7 +240,7 @@ fn update(
         bail!("every rule was refused; nothing was written and nothing changed");
     }
 
-    let database = context.paths.db_dir.join(DATABASE_FILE);
+    let database = db_dir.join(DATABASE_FILE);
     if dry_run {
         println!("Dry run: {} would be replaced", database.display());
         return Ok(Exit::Clean);
@@ -262,16 +276,34 @@ fn update(
     installed?;
 
     write_lock(
-        &context.paths.db_dir,
+        db_dir,
         &Lock {
             database: digest_of_database,
-            release,
+            release: release.to_string(),
             installed: now(),
         },
     )?;
 
     println!("Installed {}", database.display());
     Ok(Exit::Clean)
+}
+
+/// The whole feed update, for a caller that has only the data directory.
+///
+/// This is what the update script's `update.rules()` step runs. It refuses a
+/// release that publishes no digest rather than trusting the download.
+pub(crate) fn install_feed(db_dir: &Path) -> Result<()> {
+    let asset = latest_asset()?;
+    let bytes = download(&asset.url)?;
+    match &asset.digest {
+        Some(digest) => verify(&bytes, digest)?,
+        None => bail!(
+            "the release publishes no digest for this package; refusing to install what cannot \
+             be checked"
+        ),
+    }
+    install_package(db_dir, &bytes, &asset.release, false, false)?;
+    Ok(())
 }
 
 /// Turn `[rules] auto_update` on or off in the configuration.

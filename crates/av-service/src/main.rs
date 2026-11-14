@@ -299,6 +299,7 @@ fn run_service() -> Result<u8, ServiceError> {
         Err(detail) => log::debug!("this service's registration could not be read back: {detail}"),
     }
     sweep_set_aside(&paths);
+    spawn_automatic_rule_update(&paths);
 
     match scm::run(paths, loaded) {
         Ok(()) => Ok(EXIT_OK),
@@ -309,6 +310,98 @@ fn run_service() -> Result<u8, ServiceError> {
         )),
         Err(error) => Err(error),
     }
+}
+
+/// Start the rule update in the background when one is due.
+///
+/// The update itself is `wenle rules update`, run as a child process: it
+/// downloads, checks the release's digest, compiles and installs, and it stops
+/// and restarts this service around the swap. Doing it in-process would mean
+/// mapping a new database under a running gate, which is a much larger change
+/// than a weekly restart.
+///
+/// Two minutes after start-up, not at start-up: a boot is the wrong time to
+/// spend a processor on a compile, and the update stops the service, which in
+/// the first seconds of a boot is the service the decision port is waiting for.
+fn spawn_automatic_rule_update(paths: &av_core::AvPaths) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+
+    let config = std::fs::read_to_string(&paths.config_file).unwrap_or_default();
+    if !rules_setting(&config, "auto_update").is_some_and(|value| value == "true") {
+        return;
+    }
+    let hours = rules_setting(&config, "interval_hours")
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|hours| *hours > 0)
+        .unwrap_or(168);
+    let installed = installed_seconds(&paths.db_dir.join("rules.lock"));
+    let due = match installed {
+        Some(at) => now_seconds().saturating_sub(at) >= hours * 3600,
+        // Never installed: the database this service is running is not from
+        // the feed, and the first update is due immediately.
+        None => true,
+    };
+    if !due {
+        log::debug!("automatic rule update: not due for another {hours} hours");
+        return;
+    }
+    let cli = paths.install_dir.join("wenle.exe");
+    if !cli.is_file() {
+        log::warn!(
+            "automatic rule update is on, but {} is not there to run it",
+            cli.display()
+        );
+        return;
+    }
+    std::thread::Builder::new()
+        .name("wenle-rules-update".to_string())
+        .spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(120));
+            let started = std::process::Command::new(&cli)
+                .args(["rules", "update"])
+                .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+                .spawn();
+            match started {
+                Ok(_) => log::info!("automatic rule update started: {}", cli.display()),
+                Err(error) => log::warn!("automatic rule update could not be started: {error}"),
+            }
+        })
+        .ok();
+}
+
+/// One key from the `[rules]` table, read as text.
+fn rules_setting(body: &str, key: &str) -> Option<String> {
+    let mut in_rules = false;
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_rules = trimmed == "[rules]";
+            continue;
+        }
+        if in_rules && trimmed.starts_with(key) && trimmed.contains('=') {
+            return trimmed
+                .split_once('=')
+                .map(|(_, value)| value.trim().trim_matches('"').to_string());
+        }
+    }
+    None
+}
+
+/// When the installed database was put there, from `rules.lock`.
+fn installed_seconds(lock: &std::path::Path) -> Option<u64> {
+    let body = std::fs::read_to_string(lock).ok()?;
+    body.lines()
+        .find_map(|line| line.strip_prefix("installed "))
+        .and_then(|value| value.trim().parse().ok())
+}
+
+fn now_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_secs())
+        .unwrap_or(0)
 }
 
 /// Run the same machine in the foreground.
