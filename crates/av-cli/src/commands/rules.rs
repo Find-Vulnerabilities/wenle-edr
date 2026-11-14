@@ -210,13 +210,34 @@ fn update(
     if let (Some(expected), Some(_)) = (digest, from) {
         verify(&bytes, expected)?;
     }
-    println!(
-        "  {} bytes, sha256 {}",
-        bytes.len(),
-        short(&sha256_hex(&bytes))
-    );
+    let package_digest = sha256_hex(&bytes);
+    println!("  {} bytes, sha256 {}", bytes.len(), short(&package_digest));
 
-    install_package(&context.paths.db_dir, &bytes, &release, no_restart, dry_run)
+    // Kept under the product's own tree rather than in a temp directory, on
+    // purpose. The whole data root is `is_protected`, so the real-time scanner
+    // does not scan what is written here -- and the ACL `wenle protect apply`
+    // puts on that root is what makes that exemption safe: an ordinary user
+    // cannot write a file into it, so the exemption cannot be used to hide
+    // something. The package is kept, with its digest, so that a database can
+    // be explained later: which release, which bytes.
+    if from.is_none() {
+        let feed_dir = context.paths.cache_dir.join("rules-feed");
+        if std::fs::create_dir_all(&feed_dir).is_ok() {
+            let kept = feed_dir.join(format!("{package_digest}.zip"));
+            if std::fs::write(&kept, &bytes).is_ok() {
+                println!("  package kept at {}", kept.display());
+            }
+        }
+    }
+
+    install_package(
+        &context.paths.db_dir,
+        &bytes,
+        &release,
+        &package_digest,
+        no_restart,
+        dry_run,
+    )
 }
 
 /// Compile a verified package and put it where the service reads it.
@@ -227,6 +248,7 @@ pub(crate) fn install_package(
     db_dir: &Path,
     bytes: &[u8],
     release: &str,
+    package_digest: &str,
     no_restart: bool,
     dry_run: bool,
 ) -> Result<Exit> {
@@ -280,6 +302,7 @@ pub(crate) fn install_package(
         &Lock {
             database: digest_of_database,
             release: release.to_string(),
+            package: package_digest.to_string(),
             installed: now(),
         },
     )?;
@@ -302,7 +325,7 @@ pub(crate) fn install_feed(db_dir: &Path) -> Result<()> {
              be checked"
         ),
     }
-    install_package(db_dir, &bytes, &asset.release, false, false)?;
+    install_package(db_dir, &bytes, &asset.release, &sha256_hex(&bytes), false, false)?;
     Ok(())
 }
 
@@ -445,6 +468,7 @@ fn extract(package: &[u8]) -> Result<String> {
 struct Lock {
     database: String,
     release: String,
+    package: String,
     installed: u64,
 }
 
@@ -457,6 +481,7 @@ fn read_lock(db_dir: &Path) -> Option<Lock> {
     let mut lock = Lock {
         database: String::new(),
         release: String::new(),
+        package: String::new(),
         installed: 0,
     };
     for line in body.lines() {
@@ -466,6 +491,7 @@ fn read_lock(db_dir: &Path) -> Option<Lock> {
         match key {
             "database" => lock.database = value.to_string(),
             "release" => lock.release = value.to_string(),
+            "package" => lock.package = value.to_string(),
             "installed" => lock.installed = value.parse().unwrap_or(0),
             _ => {}
         }
@@ -475,8 +501,8 @@ fn read_lock(db_dir: &Path) -> Option<Lock> {
 
 fn write_lock(db_dir: &Path, lock: &Lock) -> Result<()> {
     let body = format!(
-        "database {}\nrelease {}\ninstalled {}\n",
-        lock.database, lock.release, lock.installed
+        "database {}\nrelease {}\npackage {}\ninstalled {}\n",
+        lock.database, lock.release, lock.package, lock.installed
     );
     std::fs::write(lock_path(db_dir), body).context("writing rules.lock")
 }

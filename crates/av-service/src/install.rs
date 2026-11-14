@@ -468,10 +468,17 @@ pub fn state() -> Result<ScmState, ServiceError> {
 ///   from what a commercial product would do, and it is stated here rather than
 ///   left for somebody to find in `sc qc` output.
 #[cfg(windows)]
-pub fn install(image: &Path) -> Result<(), ServiceError> {
+pub fn install(image: &Path) -> Result<(), ServiceError> {    // Before the service is created, so that running this on a machine that
+    // already has the service still puts the icon and the shortcut in place.
+    // Best effort: a shortcut is a convenience, and an install that could not
+    // drop one on the desktop is still an install.
+    if let Err(error) = install_shortcut(image) {
+        log::warn!("the desktop shortcut was not created: {error}");
+    }
     use windows::Win32::System::Services::{
         CreateServiceW, SERVICE_AUTO_START, SERVICE_ERROR_NORMAL, SERVICE_WIN32_OWN_PROCESS,
     };
+
 
     let manager = open_manager(MANAGER_WRITE_ACCESS)?;
     let name = crate::win32::to_wide_str(SERVICE_NAME);
@@ -538,6 +545,7 @@ pub fn install(_image: &Path) -> Result<(), ServiceError> {
 pub fn remove() -> Result<(), ServiceError> {
     use windows::Win32::System::Services::DeleteService;
 
+
     let manager = open_manager(MANAGER_WRITE_ACCESS)?;
     // `DELETE` is 0x0001_0000 in the service-specific access mask, which is
     // also what `SERVICE_ALL_ACCESS` contains.
@@ -578,6 +586,7 @@ pub enum StartOutcome {
 #[cfg(windows)]
 pub fn start() -> Result<StartOutcome, ServiceError> {
     use windows::Win32::System::Services::{StartServiceW, SERVICE_START};
+
 
     let manager = open_manager(MANAGER_WRITE_ACCESS)?;
     let Some(service) = open_service(&manager, SERVICE_START)? else {
@@ -626,6 +635,7 @@ pub fn stop() -> Result<StopOutcome, ServiceError> {
     use windows::Win32::System::Services::{
         ControlService, SERVICE_CONTROL_STOP, SERVICE_STATUS, SERVICE_STOP,
     };
+
 
     let manager = open_manager(MANAGER_WRITE_ACCESS)?;
     let Some(service) = open_service(&manager, SERVICE_STOP)? else {
@@ -868,4 +878,62 @@ mod tests {
         assert_eq!(ERROR_SERVICE_ALREADY_RUNNING, RUNNING.0);
         assert_eq!(ERROR_SERVICE_NOT_ACTIVE, INACTIVE.0);
     }
+}
+
+/// The product's icon, so that the shortcut and the executable carry one.
+const ICON: &[u8] = include_bytes!("../assets/wenle.ico");
+
+/// Put the icon beside the window and a shortcut to it on the desktop.
+///
+/// Written here rather than by the installer script so that `wenle service
+/// install` is the whole installation, whichever way it was started. The
+/// shortcut goes to the public desktop: the service is installed by an
+/// administrator, and a file in that administrator's own desktop would not be
+/// seen by the person who uses the machine.
+#[cfg(windows)]
+fn install_shortcut(image: &std::path::Path) -> Result<(), ServiceError> {
+    let Some(install_dir) = image.parent() else {
+        return Ok(());
+    };
+    let icon = install_dir.join("wenle.ico");
+    if std::fs::write(&icon, ICON).is_err() {
+        // Not fatal: the shortcut still works, it just draws a default icon.
+    }
+    let gui = install_dir.join("wenle-gui.exe");
+    if !gui.is_file() {
+        return Ok(());
+    }
+    let Some(public) = std::env::var_os("PUBLIC") else {
+        return Ok(());
+    };
+    let link = std::path::PathBuf::from(public)
+        .join("Desktop")
+        .join("WenleAV.lnk");
+    let script = format!(
+        "$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{link}'); \
+         $s.TargetPath = '{target}'; $s.WorkingDirectory = '{dir}'; \
+         $s.IconLocation = '{icon},0'; $s.Description = 'WenleAV'; $s.Save()",
+        link = link.display(),
+        target = gui.display(),
+        dir = install_dir.display(),
+        icon = icon.display(),
+    );
+    let status = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .status()
+        .map_err(|error| ServiceError::Scm {
+            message: format!("the shortcut helper could not be started: {error}"),
+        })?;
+    if !status.success() {
+        return Err(ServiceError::Scm {
+            message: "the shortcut helper failed".to_string(),
+        });
+    }
+    log::info!("a shortcut to the window is on the desktop at {}", link.display());
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn install_shortcut(_image: &std::path::Path) -> Result<(), ServiceError> {
+    Ok(())
 }
