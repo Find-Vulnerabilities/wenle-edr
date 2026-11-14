@@ -175,7 +175,7 @@ use crate::driver;
 ///
 /// `FilterGetMessage` reports no length, so the size has to be decided in
 /// advance, and it has to be the largest thing the driver can send rather than
-/// the commonest. A buffer sized for a decision request â€” 2104 bytes â€” would
+/// the commonest. A buffer sized for a decision request — 2104 bytes — would
 /// make every [`EventMessage`] fail with `ERROR_INSUFFICIENT_BUFFER` and hand
 /// nothing back, so the first heartbeat or blocked-execution the driver reported
 /// would end the connection and the driver would go back to blocking nothing.
@@ -192,7 +192,7 @@ const _: () = assert!(RECEIVE_BYTES >= StatusMessage::SIZE);
 ///
 /// Two facts shape this table. The ordinary case is a race and not a fault: the
 /// service is started by the SCM and the minifilter is loaded by the filter
-/// manager, and whichever finishes second finds the other already there â€” a
+/// manager, and whichever finishes second finds the other already there — a
 /// first retry after a tenth of a second closes that race inside the same
 /// second. The case that actually has to be survived is the driver arriving
 /// *later*, either installed while the service runs or reloaded after a crash,
@@ -268,8 +268,8 @@ fn sleep_unless_stopped(total: Duration, stop: &AtomicBool) {
 
 /// One message, once the bytes have been read as a structure.
 ///
-/// Reading and acting are separated so that the reading â€” the only part that
-/// touches an untyped buffer â€” is a function with no engine, no channel and no
+/// Reading and acting are separated so that the reading — the only part that
+/// touches an untyped buffer — is a function with no engine, no channel and no
 /// port behind it, and so that what it refused can be named rather than
 /// silently dropped.
 pub enum Received {
@@ -351,7 +351,7 @@ impl core::fmt::Debug for Received {
 /// narrow, because `FilterGetMessage` hands back a buffer and **no length**: the
 /// only thing that says how much of the buffer is a message is the kind in its
 /// prefix. A build that read the buffer as the structure it happened to be
-/// expecting â€” rather than as the structure the prefix says the sender wrote â€”
+/// expecting — rather than as the structure the prefix says the sender wrote —
 /// would answer a question that was never asked, and the driver would discard
 /// the answer as uncorrelated and time out. Refusing is therefore the whole job
 /// here, and the caller's answer to a refusal is to drop the message and say so.
@@ -434,7 +434,7 @@ pub fn received(buffer: &[u8]) -> Received {
         },
         Some(MessageKind::Config) => Received::Unreadable {
             // A configuration travels the other way. The service is the only
-            // sender of one â€” see `configure` above â€” so a configuration
+            // sender of one — see `configure` above — so a configuration
             // *arriving* here is a driver this build does not understand, or a
             // message that was echoed. It is refused rather than decoded for the
             // same reason every other unreadable message is: nothing good comes
@@ -459,7 +459,7 @@ pub fn received(buffer: &[u8]) -> Received {
 ///
 /// `None` only when the buffer is shorter than the structure, which is the one
 /// thing that can go wrong: every structure in this protocol is a `repr(C)`
-/// aggregate of integers and fixed arrays â€” no enums, no references, no niche â€”
+/// aggregate of integers and fixed arrays — no enums, no references, no niche —
 /// so every bit pattern is a valid value of the type, including the zeroed one.
 /// `read_unaligned` is used because a byte slice carries no alignment promise;
 /// the buffer this module actually passes is over-aligned for the kernel's
@@ -476,8 +476,8 @@ fn read_struct<T: Copy>(buffer: &[u8]) -> Option<T> {
 
 /// What the receive loop should do with one message.
 pub enum Action {
-    /// Answer the driver. The reply is complete â€” it carries both the filter
-    /// manager's message identifier and the product's request identifier â€” so
+    /// Answer the driver. The reply is complete — it carries both the filter
+    /// manager's message identifier and the product's request identifier — so
     /// the caller passes it straight to `FilterReplyMessage` with its own size
     /// as the length.
     Reply(DecisionReplyMessage),
@@ -491,7 +491,7 @@ pub enum Action {
     /// **Two answers travel this way, and they are not the same news.** A
     /// [`Decision::Block`] is a refusal: the program did not run. A
     /// [`Decision::Allow`] carrying a detection is a gate that reports and does
-    /// not refuse â€” the program did run, and the file is still worth taking.
+    /// not refuse — the program did run, and the file is still worth taking.
     /// The [`Detection`] carries which one it was, through
     /// [`Detection::claims_a_block`], and the loop at the bottom of this module
     /// replies before it reports for the first of those reasons only.
@@ -556,8 +556,8 @@ pub const fn verdict_to_decision(verdict: Verdict) -> Decision {
 /// Which of the driver's two gates asked about a path.
 ///
 /// The driver sends no field that names its callback. What it does send is
-/// [`DecisionRequestMessage::subject`], and the two callers of its `decide` â€”
-/// the only two places a decision request is built â€” have passed a different
+/// [`DecisionRequestMessage::subject`], and the two callers of its `decide` —
+/// the only two places a decision request is built — have passed a different
 /// kind: `IRP_MJ_CREATE`'s pre-operation passed `SubjectKind::Process` (the
 /// operation is the process's, before the image exists), and the
 /// acquire-for-section pre-operation passes `SubjectKind::Image`. So the field
@@ -571,13 +571,13 @@ pub const fn verdict_to_decision(verdict: Verdict) -> Decision {
 /// pre-operation stopped asking, because [`refusing_gate`] made its answer a
 /// constant the driver could not act on, so `SubjectKind::Process` no longer
 /// arrives from this build. The arm stays for two reasons: a driver that does
-/// send it â€” an older install, or a future one that asks again â€” must be
+/// send it — an older install, or a future one that asks again — must be
 /// answered and logged correctly rather than reported as "an undefined
 /// subject"; and the name is the only thing that would let a reader tell the
 /// two apart in a log.
 ///
-/// Anything else â€” a subject this build does not define, or one of the kinds no
-/// decision request carries â€” is reported as itself rather than guessed at.
+/// Anything else — a subject this build does not define, or one of the kinds no
+/// decision request carries — is reported as itself rather than guessed at.
 fn asking_gate(subject: u32) -> &'static str {
     match SubjectKind::from_wire(subject) {
         Some(SubjectKind::Process) => "create gate, an open asking FILE_EXECUTE",
@@ -591,7 +591,7 @@ fn asking_gate(subject: u32) -> &'static str {
 ///
 /// Only the acquire-for-section pre-operation may. It fires when a section is
 /// being created with execute access, which is how a program's own image is
-/// mapped â€” refusing there is the only refusal in the product that is meant to
+/// mapped — refusing there is the only refusal in the product that is meant to
 /// stop something from running.
 ///
 /// **What it is not, measured in the guest on 2026-10-13.** The same gate fires
@@ -603,23 +603,23 @@ fn asking_gate(subject: u32) -> &'static str {
 /// 2026-10-02 `block-test.exe` run logged the refusal; nothing on record
 /// measures that the process then failed to start) and is **measured** not to
 /// stop a data section mapped executable. What stops that shape is the process
-/// walk and the termination behind it, and no surface may claim more â€” see the
+/// walk and the termination behind it, and no surface may claim more — see the
 /// info line below, which says which of the two happened.
 ///
 /// **The status, after three readings and two measurements.** The reference
 /// page for this operation's `FLT_PARAMETERS` names exactly one failure a
 /// minifilter may return for a created section: `STATUS_INSUFFICIENT_RESOURCES`.
-/// That was this product's reading on 2026-10-13, was queried on 2026-10-16 â€”
+/// That was this product's reading on 2026-10-13, was queried on 2026-10-16 —
 /// the pattern the community prescribes for blocking module loading through
 /// this callback is `Data->IoStatus.Status = STATUS_ACCESS_DENIED` plus
-/// `FLT_PREOP_COMPLETE`, which is what Don Burn answers with on OSR â€” and is
+/// `FLT_PREOP_COMPLETE`, which is what Don Burn answers with on OSR — and is
 /// the reading this product acts on again from 2026-10-18.
 ///
 /// What settles it is not the argument but the two runs that went the other
 /// way. On 2026-10-13 a data file mapped `PAGE_EXECUTE_READWRITE` was mapped
 /// after the refusal was logged, and on 2026-10-17 two convicted WannaCry
 /// binaries started while both refusal lines were being written. Either the
-/// filter manager ignored `STATUS_ACCESS_DENIED` â€” the document's reading â€” or
+/// filter manager ignored `STATUS_ACCESS_DENIED` — the document's reading — or
 /// the acquire that was refused was not the one about to run. The driver now
 /// uses the documented status **and** reports the asking pid, so the next run
 /// separates the two: a refusal that names the shell and a program that still
@@ -627,14 +627,14 @@ fn asking_gate(subject: u32) -> &'static str {
 /// program's own creator and no start means the status was the problem.
 ///
 /// The create pre-operation asks about an open carrying
-/// `FILE_EXECUTE`, and that mask is not what it looks like â€” measured in the
+/// `FILE_EXECUTE`, and that mask is not what it looks like — measured in the
 /// test VM on 2026-10-01:
 ///
 /// * `FILE_EXECUTE` is `0x0020` and so is `FILE_TRAVERSE` (both in `wdm.h`,
 ///   7270 and 7271), so a *directory* open reaches this gate as an execution
 ///   question;
 /// * a copy of `notepad.exe` that nobody ran, merely displayed in a folder, is
-///   asked about here â€” Explorer reads an icon and a manifest through the image
+///   asked about here — Explorer reads an icon and a manifest through the image
 ///   loader, which needs a `FILE_EXECUTE` open, and maps it read-only, which is
 ///   exactly why the section gate stays quiet about it;
 /// * `ActivationStore.dat`, `settings.dat`, `machine.pckgdep` and
@@ -643,8 +643,8 @@ fn asking_gate(subject: u32) -> &'static str {
 /// So the create gate's question is a good hint and a poor accusation, and the
 /// cost of acting on it is real: the same log shows a sample's mere *copy*
 /// convicted, refused twice, and quarantined before anything ran it. Refusing
-/// from this gate is therefore given up, and the section gate â€” which fires
-/// only when a file is genuinely about to become an executable image â€” carries
+/// from this gate is therefore given up, and the section gate — which fires
+/// only when a file is genuinely about to become an executable image — carries
 /// every refusal.
 ///
 /// **What a create-gate conviction does now, since 2026-10-15.** It is
@@ -652,7 +652,7 @@ fn asking_gate(subject: u32) -> &'static str {
 /// service so the file is taken. Before that it was a log line and nothing
 /// else. In the 2026-10-14 WannaCry run this gate produced about sixty of those
 /// lines, every one of them a file the engine had convicted, and not one of
-/// them did anything at all â€” which is the half of that failure that is fixed
+/// them did anything at all — which is the half of that failure that is fixed
 /// on this side. The other half is fixed in the driver: it stopped asking here
 /// entirely, because an answer that can only ever be `Allow` is not worth the
 /// port thread's time, and occupying that thread is what let a WannaCry
@@ -669,7 +669,7 @@ fn refusing_gate(subject: u32) -> bool {
 /// See this module's documentation for the two correlations a reply has to
 /// carry. The one line that is not [`DecisionReplyMessage::answering`]'s is the
 /// filter manager's own `MessageId`, which `answering` leaves at zero because
-/// the port header is not the product's protocol â€” and a reply whose `MessageId`
+/// the port header is not the product's protocol — and a reply whose `MessageId`
 /// matches no outstanding receive is discarded, which is the difference between
 /// a blocked program and a driver that waited five seconds and allowed it.
 pub fn reply_for(request: &DecisionRequestMessage, decision: Decision) -> DecisionReplyMessage {
@@ -714,7 +714,7 @@ const STATUS_OBJECT_PATH_NOT_FOUND: u32 = 0xC000_003A;
 /// answer at all:
 ///
 /// * A value that is not Win32-shaped has no Win32 code inside it. `E_FAIL` is
-///   `0x8000_4005`, whose low bits are `5` â€” the same `5` as
+///   `0x8000_4005`, whose low bits are `5` — the same `5` as
 ///   `ERROR_ACCESS_DENIED`. Masking alone would report a generic failure as a
 ///   permissions problem and send the reader to look at a DACL.
 /// * The filter manager may answer with an `NTSTATUS` instead.
@@ -748,7 +748,7 @@ pub const fn connect_failure_reason(hr: u32) -> &'static str {
 /// outstanding receive with `ERROR_INVALID_HANDLE`; a port closed under a
 /// blocked receive gives `ERROR_OPERATION_ABORTED`; a pipe-shaped failure gives
 /// one of the three codes `crate::win32::is_peer_gone` knows. All of them are
-/// ordinary â€” a driver being reloaded is a thing that happens â€” and all of them
+/// ordinary — a driver being reloaded is a thing that happens — and all of them
 /// are followed by a reconnect, which is the whole point of retrying. Only the
 /// codes that are neither are worth a warning.
 const fn is_connection_over(code: u32) -> bool {
@@ -769,7 +769,7 @@ const SCAN_WORKERS: usize = 4;
 /// How many files may be waiting for a worker.
 ///
 /// The queue holds the files whose driver has already given up waiting, so a
-/// queue that is filling is a backlog rather than a fault â€” but a queue with no
+/// queue that is filling is a backlog rather than a fault — but a queue with no
 /// ceiling is not a queue. Sixty-four entries is thirty-two scans per worker,
 /// which is minutes rather than seconds of backlog for any scan slower than a
 /// second; past that the machine has stopped keeping up, and the honest answer
@@ -798,12 +798,12 @@ const REPLY_HEADROOM: Duration = Duration::from_millis(1_500);
 /// cannot drift apart without that being a decision: the driver's wait is
 /// [`DecisionPolicy::DEFAULT`]'s, taken at its own `FltSendMessage` call, and
 /// this is that minus [`REPLY_HEADROOM`]. A reply that arrives after the driver
-/// has stopped waiting is not a late reply â€” it is an error: `FilterReplyMessage`
+/// has stopped waiting is not a late reply — it is an error: `FilterReplyMessage`
 /// answers `ERROR_FLT_NO_WAITER_FOR_REPLY` (`0x801F0020`), which is the warning
 /// the field logs carried once per large file.
 ///
 /// The driver's wait is not configurable through anything the service can reach,
-/// and [`DriverStatus`] has no field for it â€” so this is a fact about that call
+/// and [`DriverStatus`] has no field for it — so this is a fact about that call
 /// site and not about anything the driver tells the service. If the driver is
 /// ever built to wait longer than [`DecisionPolicy::DEFAULT`], the way that
 /// shows up here is a rising `decisions_unanswered`, which is the counter the
@@ -857,19 +857,19 @@ struct ScanJob {
 ///   waits [`DecisionPolicy::DEFAULT_TIMEOUT_MS`]; the budget
 ///   [`ScanOptions::realtime`] sets is five seconds *plus a second per
 ///   megabyte*, and it is a label the engine puts on a scan it has already
-///   finished rather than a stop condition â€” so every file of a megabyte or more
+///   finished rather than a stop condition — so every file of a megabyte or more
 ///   could be scanned for longer than the driver's patience. The reply then came
 ///   back `ERROR_FLT_NO_WAITER_FOR_REPLY` and the file had already been allowed.
 /// * **One slow file delayed every other decision**, because the port thread was
 ///   inside the scan and could not read the next message. A small binary behind
 ///   a large one inherited the large one's scan time and timed out too, which is
-///   what the `0x801F0020` on `OneDriveStandaloneUpdater.exe` â€” not a large file
-///   â€” is.
+///   what the `0x801F0020` on `OneDriveStandaloneUpdater.exe` — not a large file
+///   — is.
 ///
 /// So the scan lives here now. Workers take jobs off a queue; the port thread
 /// waits [`DECISION_DEADLINE`] for an answer and answers the driver itself if it
 /// has none; and a scan that outlives that wait is not abandoned. It finishes,
-/// and a conviction it reaches afterwards is *reported* â€” see [`report_late`] â€”
+/// and a conviction it reaches afterwards is *reported* — see [`report_late`] —
 /// rather than sent as a reply the driver is no longer waiting for.
 ///
 /// The threads are detached on purpose. Dropping the queue's sender ends every
@@ -906,7 +906,7 @@ impl ScanPool {
                 // Worth a line at the top of the log: with no worker at all,
                 // every decision is answered without the file being examined,
                 // and nothing else in the product says so. The service still
-                // starts â€” the driver allows what it cannot get an answer for.
+                // starts — the driver allows what it cannot get an answer for.
                 log::error!("a decision-scan thread could not be started: {error}");
             }
         }
@@ -924,7 +924,7 @@ impl ScanPool {
     /// driver anyway: the driver's own clock is the reason this one exists, and
     /// a late reply is worse than an early [`Decision::Allow`] because the
     /// driver logs it as an error and discards it. What the deadline costs is
-    /// the *blocking*, not the detection â€” the scan carries on, and if it
+    /// the *blocking*, not the detection — the scan carries on, and if it
     /// convicts, [`report_late`] says so.
     fn scan_within(&self, path: &Path, options: &ScanOptions) -> Option<FileScanReport> {
         let (reply, answer) = crossbeam_channel::bounded(1);
@@ -940,7 +940,7 @@ impl ScanPool {
                 // file, and it is about the queue rather than about the path:
                 // sixty-four files are already waiting and every one of them
                 // has a driver that has stopped waiting. Reported as a rate
-                // rather than once per file â€” see [`SKIP_REPORT_INTERVAL`] â€”
+                // rather than once per file — see [`SKIP_REPORT_INTERVAL`] —
                 // because a full queue arrives as thousands at a time, and
                 // because a reader needs the count far more than the names.
                 let skipped = self.skipped.fetch_add(1, Ordering::Relaxed) + 1;
@@ -1037,22 +1037,22 @@ fn scan_jobs(engine: Arc<ScanEngine>, queue: Receiver<ScanJob>) {
 /// Report a conviction the driver was never told about.
 ///
 /// This is the half of a decision that cannot be a reply. By the time it runs
-/// the driver has answered for itself â€” `DecisionPolicy::DEFAULT.on_timeout` is
-/// [`Decision::Allow`] â€” so whatever this says, the file was not stopped, and
+/// the driver has answered for itself — `DecisionPolicy::DEFAULT.on_timeout` is
+/// [`Decision::Allow`] — so whatever this says, the file was not stopped, and
 /// the detection is built with `blocked = false` for exactly that reason:
 /// [`av_ipc::Phase::describe`] then reads "was found after it appeared", and
 /// nothing downstream can turn it into a claim that a program was blocked. It is
-/// not a weaker finding â€” [`crate::host`] acts on a confirmed driver detection
+/// not a weaker finding — [`crate::host`] acts on a confirmed driver detection
 /// whether or not it claims a block, so the file goes into the vault exactly as
-/// a refused one does â€” and it is not a second answer: the driver's request was
+/// a refused one does — and it is not a second answer: the driver's request was
 /// answered before this was built.
 ///
-/// Reported from *both* gates â€” the create gate, which [`refusing_gate`]
+/// Reported from *both* gates — the create gate, which [`refusing_gate`]
 /// excludes and which therefore may not refuse at all, and the section gate. The
 /// report-only decision for the create gate is about
-/// refusing â€” an open carrying `FILE_EXECUTE` is asked about everything, so a
+/// refusing — an open carrying `FILE_EXECUTE` is asked about everything, so a
 /// conviction there does not stop the open and says nothing about a program
-/// about to run â€” and it is not a decision to keep quiet about a file the engine
+/// about to run — and it is not a decision to keep quiet about a file the engine
 /// has convicted. This detection makes no claim the gate cannot support: it says
 /// the file was found and was not blocked, which is true of both gates.
 fn report_late(events: &Sender<Event>, report: FileScanReport) {
@@ -1185,7 +1185,7 @@ impl Dispatcher {
     /// What the driver last reported about itself, if it has reported.
     ///
     /// Kept rather than logged and forgotten because it is the only evidence in
-    /// the product about what the *driver* thinks it is doing â€” how many
+    /// the product about what the *driver* thinks it is doing — how many
     /// decisions it asked, how many it never got an answer for, how many events
     /// it dropped. The status this service reports through
     /// [`crate::driver::check`] answers a different question, which is whether
@@ -1259,7 +1259,7 @@ impl Dispatcher {
         // an event that has already happened, and a replacement character in a
         // log is better than dropping the report. Here the text is the thing
         // that gets opened, so a path this process cannot reproduce exactly is a
-        // path it must not decide about â€” and the answer for "I cannot name
+        // path it must not decide about — and the answer for "I cannot name
         // this" is the same as for every other failure.
         let Ok(text) = String::from_utf16(units) else {
             log::warn!("the driver asked about a path that is not valid UTF-16; allowing it");
@@ -1272,7 +1272,7 @@ impl Dispatcher {
         // program launch, and a file the user has said is fine must not spend
         // the machine's time being convicted and then excused. Allow is the
         // correct answer here whether the engine would have convicted it or not
-        // â€” that is what the user said â€” so nothing is lost by not asking.
+        // — that is what the user said — so nothing is lost by not asking.
         //
         // This is the branch that makes the "Allow" button mean something in
         // real time. Without it the exclusion would only be read by the GUI's
@@ -1409,7 +1409,7 @@ impl Dispatcher {
         // Which process issued the operation. **Not the program that is about
         // to run**: the image section of a process being created is created on
         // the thread that called `CreateProcess`, so this names the shell or
-        // launcher. Nothing acts on it â€” the pid is here because it settles a
+        // launcher. Nothing acts on it — the pid is here because it settles a
         // question the driver could not answer before 2026-10-18 (was a
         // refusal the complainant's own acquire, or a bystander's?) and because
         // a crash report that says "this file" is worth more with "opened by
@@ -1459,18 +1459,18 @@ impl Dispatcher {
             // `refusing_gate` is what puts a verdict on this branch, so this line
             // is always the acquire-for-section gate answering a section.
             //
-            // The claim is about what this product *did* â€” it answered the
-            // driver's question with a refusal â€” and, since 2026-10-18, about
+            // The claim is about what this product *did* — it answered the
+            // driver's question with a refusal — and, since 2026-10-18, about
             // what the filter manager does with that answer.
             //
             // **The status is the whole history of this feature.** Until
             // 2026-10-18 the driver completed the section with
             // `STATUS_ACCESS_DENIED`, which the filter manager does not honour
-            // for a created section â€” the only failure it accepts there is
+            // for a created section — the only failure it accepts there is
             // `STATUS_INSUFFICIENT_RESOURCES`. So this line printed, the
             // conviction was real, and the program ran anyway: measured on
             // 2026-10-13 (a data file mapped executable was mapped, and the
-            // process walk stopped the process 1â€“2 s later) and again on
+            // process walk stopped the process 1–2 s later) and again on
             // 2026-10-17, when two convicted WannaCry binaries started while
             // both lines were being written.
             //
@@ -1489,7 +1489,7 @@ impl Dispatcher {
             // `Reported` rather than `Quarantined`: nothing has been done to
             // the file yet, and this function cannot do anything to it. The
             // vault belongs to the service, which is the only thing that writes
-            // to it â€” the reply travels back to the driver first, and the
+            // to it — the reply travels back to the driver first, and the
             // service acts on this detection when it drains its channel. A
             // detection that guessed at the action would be a notification
             // promising a file had been taken before anyone had tried.
@@ -1539,7 +1539,7 @@ impl Dispatcher {
         };
         if let Some(error) = &report.error {
             // The verdict for a file that could not be read is `Unknown`, which
-            // is not a block â€” so a file the engine could not open is allowed,
+            // is not a block — so a file the engine could not open is allowed,
             // and this line is the only evidence that a decision was made
             // without looking. The alternative, refusing what cannot be
             // examined, is the fail-closed shape this module exists not to have.
@@ -1551,8 +1551,8 @@ impl Dispatcher {
 
 /// [`Dispatcher`], for a log line or a failed assertion.
 ///
-/// The status is summarised rather than printed: it has no `Debug` of its own â€”
-/// it is a bare `repr(C)` wire structure â€” and the field that matters here is
+/// The status is summarised rather than printed: it has no `Debug` of its own —
+/// it is a bare `repr(C)` wire structure — and the field that matters here is
 /// whether the driver has said anything at all.
 impl core::fmt::Debug for Dispatcher {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -1567,8 +1567,8 @@ impl core::fmt::Debug for Dispatcher {
 /// What a status message says, in a sentence.
 ///
 /// The counters are the interesting part and are carried in full: they are how
-/// a service notices that it is answering badly â€” decisions asked that were
-/// never answered, events the driver dropped â€” without needing a debugger on
+/// a service notices that it is answering badly — decisions asked that were
+/// never answered, events the driver dropped — without needing a debugger on
 /// the kernel side.
 fn describe_status(status: &DriverStatus) -> String {
     use av_driver_proto::event::DriverState;
@@ -1590,9 +1590,9 @@ fn describe_status(status: &DriverStatus) -> String {
 
 /// The event published when the connection to the driver's port comes or goes.
 ///
-/// `av_ipc`'s vocabulary already has the slot â€” `DriverEventAction::StateChanged`
+/// `av_ipc`'s vocabulary already has the slot — `DriverEventAction::StateChanged`
 /// is documented as "the driver's state changed, or the service connected or
-/// disconnected" â€” and this is what the product emits through it. A user
+/// disconnected" — and this is what the product emits through it. A user
 /// interface that shows whether real-time protection is actually attached needs
 /// exactly this and cannot derive it from anything else the service says: the
 /// driver's presence check answers "is the driver loaded", and a loaded driver
@@ -1603,7 +1603,7 @@ fn describe_status(status: &DriverStatus) -> String {
 ///
 /// `pub(crate)` for one reader: `crate::host`'s tests, which check that an event
 /// this module produces reaches a client through the host's drain rather than
-/// being built twice â€” a hand-rolled copy in a test would agree with this
+/// being built twice — a hand-rolled copy in a test would agree with this
 /// function only by being edited alongside it.
 pub(crate) fn connection_event(connected: bool, port_name: &str) -> DriverEvent {
     use av_ipc::{DriverPresence, DriverStatus as Presence};
@@ -1655,7 +1655,7 @@ pub(crate) fn connection_event(connected: bool, port_name: &str) -> DriverEvent 
 
 /// The current time in the units [`DriverEvent`] reports.
 ///
-/// 100-nanosecond units since 1601-01-01, which is `FILETIME` â€” the unit the
+/// 100-nanosecond units since 1601-01-01, which is `FILETIME` — the unit the
 /// driver has without converting, and therefore the unit the field is in. The
 /// conversion lives here rather than in `av-ipc` because every other producer of
 /// a `DriverEvent` gets the value from the driver and only this one has to make
@@ -1675,7 +1675,7 @@ fn now_100ns() -> u64 {
 pub struct Client {
     /// Set to ask the thread to stop.
     stop: Arc<AtomicBool>,
-    /// True while the thread is alive â€” retrying, connecting, or serving.
+    /// True while the thread is alive — retrying, connecting, or serving.
     running: Arc<AtomicBool>,
     /// The thread, or `None` when it could not be started.
     worker: Option<std::thread::JoinHandle<()>>,
@@ -1707,7 +1707,7 @@ impl Client {
     ///
     /// Not joined, and the reason is in this module's documentation: a thread
     /// inside a receive is inside a kernel wait that nothing in user mode can
-    /// interrupt, so a join would block the caller â€” and the caller is
+    /// interrupt, so a join would block the caller — and the caller is
     /// [`crate::host::Host::shut_down`], on the path that answers the SCM's stop
     /// request. A detached thread that outlives the call by one message is the
     /// smaller of the two problems.
@@ -1730,7 +1730,7 @@ impl Drop for Client {
 /// has a connection limit and the second client is a client the installed
 /// service cannot be. A test run on a machine where the product is installed
 /// would take the driver's client slot and leave the real service deciding
-/// nothing â€” silently, which is the failure this whole module is about.
+/// nothing — silently, which is the failure this whole module is about.
 ///
 /// There was a `start` beside this that passed
 /// [`av_driver_proto::PORT_NAME`] and nothing else, with a comment saying it was
@@ -1808,9 +1808,9 @@ pub fn start_on(
             Err(error) => {
                 // A thread that cannot be created is a machine out of memory or
                 // out of handles. It is not a reason to fail the service's
-                // startup â€” the driver allows whatever it cannot get an answer
+                // startup — the driver allows whatever it cannot get an answer
                 // for, so the product keeps working with the real-time path off
-                // â€” but it is a reason to say so at the top of the log.
+                // — but it is a reason to say so at the top of the log.
                 log::error!("the filter-port thread could not be started: {error}");
                 running.store(false, Ordering::SeqCst);
                 Client {
@@ -1829,12 +1829,12 @@ pub fn start_on(
         // a build with no driver behind it is not a build that is protecting the
         // machine, whatever its status report says about the engine. Same shape
         // as [`crate::driver::check`]'s non-Windows arm, and for the same
-        // reason â€” a build that cannot look must say "I cannot look" rather than
+        // reason — a build that cannot look must say "I cannot look" rather than
         // answer "nothing there".
         // `allow` and `configuration` are dropped with the rest: with no port
         // there is no decision path for the first to be consulted on and no
         // driver to arm the second on, and something nobody can read is not an
-        // error to report â€” the warning below is the whole story.
+        // error to report — the warning below is the whole story.
         let _ = (engine, events, port_name, allow, own_tree, configuration);
         log::warn!(
             "this build has no filter manager: the driver's decision port cannot be connected \
@@ -1851,7 +1851,7 @@ pub fn start_on(
 /// The thread: connect, serve, reconnect, until asked to stop.
 ///
 /// The connection is deliberately not `?`-able. Every failure here has the same
-/// handling â€” wait, then try again â€” because the state this loop is in when it
+/// handling — wait, then try again — because the state this loop is in when it
 /// cannot connect is a supported state of the product rather than a fault, and
 /// the only thing that can improve it is time.
 #[cfg(windows)]
@@ -1902,7 +1902,7 @@ fn run(
         // what the driver does for this product depends on the configuration
         // that arrives with the connection, and a window told "the driver is
         // connected" before it was told to arm itself would be showing a state
-        // that is about to change. It is also the order the driver needs â€” its
+        // that is about to change. It is also the order the driver needs — its
         // own two registration reports are queued from *its* connect callback,
         // which has already run by the time this returns.
         configure(&port, &configuration, &events);
@@ -1953,7 +1953,7 @@ fn run(
 ///
 /// Not behind `#[cfg(windows)]`: the late half of a decision is reported from a
 /// waiting thread rather than from the port loop, and that thread is the same
-/// on every platform â€” the port is the only part of this module that is not.
+/// on every platform — the port is the only part of this module that is not.
 fn publish(events: &Sender<Event>, event: Event) {
     if events.send(event).is_err() {
         log::debug!("no host is listening for driver events; one was dropped");
@@ -1962,8 +1962,8 @@ fn publish(events: &Sender<Event>, event: Event) {
 
 /// Answer the driver's decision request.
 ///
-/// Split out of the receive loop so that the two things a block does â€” answer,
-/// then report â€” are two calls in one arm rather than a duplicated block of
+/// Split out of the receive loop so that the two things a block does — answer,
+/// then report — are two calls in one arm rather than a duplicated block of
 /// `unsafe` that has to stay in step with itself.
 #[cfg(windows)]
 fn reply_to_driver(
@@ -1990,7 +1990,7 @@ fn reply_to_driver(
     if let Err(error) = sent {
         // The driver has given up waiting and allowed the file. That is a missed
         // decision and not a broken machine, and the connection is about to be
-        // rebuilt by the receive that follows â€” so this is a warning about a
+        // rebuilt by the receive that follows — so this is a warning about a
         // lost decision rather than an error about the service.
         log::warn!("a decision could not be delivered: {error}");
     }
@@ -2006,7 +2006,7 @@ fn reply_to_driver(
 /// constant in a kernel driver, because the answer is a configuration the user
 /// owns and can change while the driver is loaded. So they arrive as a
 /// [`ConfigMessage`] over the same port the decisions come back on, and they
-/// arrive on every connection rather than once â€” the driver keeps no state
+/// arrive on every connection rather than once — the driver keeps no state
 /// across a disconnect, and a service that sent this only on its first connect
 /// would leave a driver restarted underneath it armed with nothing.
 ///
@@ -2015,8 +2015,8 @@ fn reply_to_driver(
 /// This call is synchronous and its answer is the only place the service ever
 /// learns whether the driver *applied* the configuration. `STATUS_SUCCESS` means
 /// it did; anything else means a defence the user asked for is not in place, and
-/// the two ways that happens â€” a driver build that cannot parse the message, and
-/// a write gate pointed at a directory it will not take â€” are both worth a
+/// the two ways that happens — a driver build that cannot parse the message, and
+/// a write gate pointed at a directory it will not take — are both worth a
 /// sentence a user can read rather than a silence indistinguishable from
 /// working protection. The number travels as a
 /// [`DriverSubject::Configuration`] event so that `Host::status` can report it
@@ -2025,8 +2025,8 @@ fn reply_to_driver(
 ///
 /// # Failure to send is not a failure of the connection
 ///
-/// A send that fails at the API level leaves the connection usable â€” the port is
-/// still open and decisions still arrive on it â€” so this reports the failure and
+/// A send that fails at the API level leaves the connection usable — the port is
+/// still open and decisions still arrive on it — so this reports the failure and
 /// returns. Dropping the connection would take the decision path down over a
 /// configuration message, which would make an unreachable defence worse than
 /// absent.
@@ -2039,7 +2039,7 @@ fn configure(
     use windows::Win32::Storage::InstallableFileSystems::FilterSendMessage;
 
     // The driver answers with one `NTSTATUS`, four bytes, through the output
-    // buffer â€” see `av-driver`'s `port_message`. Zeroed first so that a driver
+    // buffer — see `av-driver`'s `port_message`. Zeroed first so that a driver
     // which somehow reported nothing at all cannot have a previous call's value
     // read as its answer.
     let mut answer: i32 = 0;
@@ -2073,7 +2073,7 @@ fn configure(
         }
         // A driver that answered without writing four bytes is a driver this
         // build does not understand. Reported as such rather than read as zero
-        // â€” zero is `STATUS_SUCCESS`, which is the one value that must never be
+        // — zero is `STATUS_SUCCESS`, which is the one value that must never be
         // reached by accident.
         Ok(()) if returned != core::mem::size_of::<i32>() as u32 => {
             log::warn!(
@@ -2138,7 +2138,7 @@ fn connect(port_name: &str) -> windows::core::Result<windows::Win32::Foundation:
 /// `FilterGetMessage` writes a `FILTER_MESSAGE_HEADER` at the front of the
 /// buffer, and the filter manager probes that address for write access before it
 /// copies anything into it. A misaligned buffer fails that probe, so the
-/// alignment is part of the call's contract rather than a performance hint â€” and
+/// alignment is part of the call's contract rather than a performance hint — and
 /// a `Vec<u8>`, whose type promises nothing beyond byte alignment, would be
 /// relying on the allocator's size classes to happen to be right.
 #[cfg(windows)]
@@ -2170,8 +2170,8 @@ impl ReceiveBuffer {
 
 /// How many messages the receive thread may hand either of the two lanes.
 ///
-/// Large enough that an ordinary burst â€” a build writing a thousand files, a
-/// registry sweep â€” never makes the receive thread wait, and bounded because
+/// Large enough that an ordinary burst — a build writing a thousand files, a
+/// registry sweep — never makes the receive thread wait, and bounded because
 /// the alternative is a queue that grows with whatever the machine is doing.
 /// When it does fill, the receive thread blocks on the hand-off and the driver
 /// is back to losing ordinary events; that is a machine asking more of the
@@ -2182,7 +2182,7 @@ const INBOX_MESSAGES: usize = 1024;
 ///
 /// Two, and the split is 2026-10-18's answer to a measured loss. [`serve`] ran
 /// one dispatcher thread over one queue, and a decision on that thread blocks
-/// for as long as its scan takes â€” up to [`DECISION_DEADLINE`]. The test VM
+/// for as long as its scan takes — up to [`DECISION_DEADLINE`]. The test VM
 /// showed what that costs the other messages: forty registry keys deleted in a
 /// tight loop right after boot delivered too few delete events for a
 /// thirty-count rule to fire, while the same forty on a warmed-up machine
@@ -2191,8 +2191,8 @@ const INBOX_MESSAGES: usize = 1024;
 /// the dispatch thread was inside a scan for most of that minute, the queue
 /// filled behind it, and the receive thread stopped receiving.
 ///
-/// So decisions keep the serialised lane they had â€” one at a time, the design
-/// this module documents â€” and everything else is reported on a thread that
+/// So decisions keep the serialised lane they had — one at a time, the design
+/// this module documents — and everything else is reported on a thread that
 /// never scans and therefore never stops reading.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Lane {
@@ -2225,11 +2225,11 @@ const INBOX_POLL: Duration = Duration::from_millis(50);
 
 /// How many threads wait in `FilterGetMessage` at once.
 ///
-/// **One, and a second one is not merely unhelpful â€” it breaks the port.**
+/// **One, and a second one is not merely unhelpful — it breaks the port.**
 /// Measured in the test VM on 2026-10-18: with two threads waiting on the same
 /// port handle, `FilterGetMessage` began returning *success* without writing a
 /// message, thousands of times a second. Each empty success is a message this
-/// service reads as `kind 0, version 0` and refuses, and the log said so â€”
+/// service reads as `kind 0, version 0` and refuses, and the log said so —
 /// `service.log` grew from 10.9 MB in seventeen minutes to 6.3 MB in
 /// twenty-four seconds the moment that build started. Whatever pairing the
 /// filter manager does between a send and a waiting receive is per connection
@@ -2334,8 +2334,8 @@ fn asking_process_image(_pid: u32) -> Option<String> {
 ///
 /// # Why receiving and deciding are two threads
 ///
-/// The driver sends every ordinary event â€” a process start, a registry change,
-/// a rename â€” with a **zero** timeout, and `FltSendMessage` with a zero timeout
+/// The driver sends every ordinary event — a process start, a registry change,
+/// a rename — with a **zero** timeout, and `FltSendMessage` with a zero timeout
 /// fails immediately when no receive is outstanding (`av-driver/src/lib.rs`,
 /// `send_event`). The failure is the event: it is not queued, not retried and
 /// not counted. So an event is delivered only if this process is inside
@@ -2344,7 +2344,7 @@ fn asking_process_image(_pid: u32) -> Option<String> {
 /// one.
 ///
 /// Until 2026-10-18 both halves ran on one thread, and the decision half blocks
-/// for as long as the scan it waits for takes â€” up to `DECISION_DEADLINE`.
+/// for as long as the scan it waits for takes — up to `DECISION_DEADLINE`.
 /// Measured in the test VM that evening: forty registry keys deleted in one
 /// tight loop delivered forty `created key` events and **seventeen**
 /// `deleted key` events, because the port thread was scanning for most of the
@@ -2355,7 +2355,7 @@ fn asking_process_image(_pid: u32) -> Option<String> {
 /// So this thread does nothing but receive and hand over, and what it hands
 /// over goes to one of two lanes ([`lane`]): [`serve_messages`] decides, and
 /// [`report_events`] reports. The two are separate threads because the same VM
-/// measured the same loss again with only the receive half split off â€” forty
+/// measured the same loss again with only the receive half split off — forty
 /// deletes in a tight loop one minute after boot still did not reach the
 /// thirty-count rule, while the same forty on a warmed-up machine delivered all
 /// forty. At boot the decisions in flight are scans of `mpengine.dll` and five
@@ -2367,7 +2367,7 @@ fn asking_process_image(_pid: u32) -> Option<String> {
 /// The receive thread ends when the port ends or when both lanes have gone.
 /// Its own exit is not waited for: `run` closes the port after this function
 /// returns, and the filter manager then completes the receive with an
-/// error â€” the same policy [`crate::host`] applies to this whole client.
+/// error — the same policy [`crate::host`] applies to this whole client.
 #[cfg(windows)]
 fn serve(port: &windows::Win32::Foundation::HANDLE, dispatcher: &mut Dispatcher, events: &Sender<Event>, stop: &AtomicBool) -> bool {
     // Set by a receive thread that found the filter gone and could not cancel
@@ -2379,7 +2379,7 @@ fn serve(port: &windows::Win32::Foundation::HANDLE, dispatcher: &mut Dispatcher,
     let (decisions, deciding) = crossbeam_channel::bounded::<Received>(INBOX_MESSAGES);
     let (notices, reporting) = crossbeam_channel::bounded::<Received>(INBOX_MESSAGES);
     // The reporter first, so that its failure can be answered by sending
-    // everything down the decision lane instead â€” the single-threaded behaviour
+    // everything down the decision lane instead — the single-threaded behaviour
     // this split replaces, which loses events under load but never loses a
     // decision. `None` is that fallback.
     let reporter = events.clone();
@@ -2398,7 +2398,7 @@ fn serve(port: &windows::Win32::Foundation::HANDLE, dispatcher: &mut Dispatcher,
     };
     // The handle as a number: `HANDLE` is not `Send` and the receive threads
     // need a copy rather than the borrow. Nothing closes it while they can
-    // still use it â€” `run` closes it only after this returns.
+    // still use it — `run` closes it only after this returns.
     let raw = port.0 as isize;
     let mut waiting = 0;
     for index in 0..RECEIVE_THREADS {
@@ -2482,7 +2482,7 @@ fn receive_until_the_port_ends(
         // does not report how long the message it wrote is, so a byte it did
         // *not* write has to read as zero rather than as the tail of the
         // previous message. Without this, a stale `path_units` would be read as
-        // the length of this message's path â€” a decision about a file named by
+        // the length of this message's path — a decision about a file named by
         // a mixture of two messages.
         buffer.clear();
         // SAFETY: `buffer` is alive for the operation, is exactly `RECEIVE_BYTES`
@@ -2834,7 +2834,7 @@ fn filter_is_in(buffer: &[u8], length: u32, name: &str) -> bool {
 /// Report the messages that are not decisions, on their own thread.
 ///
 /// Nothing here can block: `driver::translate` copies fields and [`publish`]
-/// hands the event to a channel. That is the point of the lane â€” see [`serve`]
+/// hands the event to a channel. That is the point of the lane — see [`serve`]
 /// for the measurement that made events stop arriving behind a scan.
 #[cfg(windows)]
 fn report_events(messages: &Receiver<Received>, events: &Sender<Event>) {
@@ -2903,8 +2903,8 @@ fn report_events(messages: &Receiver<Received>, events: &Sender<Event>) {
 /// answer the driver.
 ///
 /// Only [`Lane::Decide`] messages arrive here; the rest are reported by
-/// [`report_events`]. What this loop blocks on â€” one scan at a time, up to
-/// `DECISION_DEADLINE` â€” is therefore no longer in front of anything else.
+/// [`report_events`]. What this loop blocks on — one scan at a time, up to
+/// `DECISION_DEADLINE` — is therefore no longer in front of anything else.
 ///
 /// `stop` is checked between messages and not during one; see this module's
 /// documentation for why that window cannot be closed.
@@ -2931,7 +2931,7 @@ fn serve_messages(
             Action::ReplyAndReport(reply, detection) => {
                 // The order matters, and it is not the obvious one. The driver
                 // is sitting inside its own timeout, so the earlier the answer
-                // goes back the less of that timeout is spent â€” and, when the
+                // goes back the less of that timeout is spent — and, when the
                 // answer is a refusal, the file is held open by the kernel for
                 // exactly as long as this reply is outstanding. Reporting first
                 // would put a vault write between the scan and the answer, on a
@@ -2976,7 +2976,7 @@ mod tests {
     /// `severity = "high"` on purpose: one High indicator reaches
     /// [`Verdict::Malicious`], and only a confirmed verdict is blocked. A rule
     /// with no severity lands in the yellow band, where the product warns and
-    /// never acts â€” which is what
+    /// never acts — which is what
     /// `only_the_red_band_blocks_and_the_yellow_band_never_does` is about, so
     /// the severity here has to be the one that *would* be blocked for the
     /// blocking tests to mean anything.
@@ -3006,8 +3006,8 @@ mod tests {
     /// Dropping the receiving end is what the callers above do, and it is not a
     /// loss: a detection sent to a channel nobody holds is a send that fails,
     /// which is a debug line, and those tests are about the reply. It is here
-    /// because the *late* half of a decision has no reply â€” the detection is
-    /// the whole of what it produces â€” so a test of it has to watch.
+    /// because the *late* half of a decision has no reply — the detection is
+    /// the whole of what it produces — so a test of it has to watch.
     fn dispatcher_watching(
         database: RuleDatabase,
         deadline: Duration,
@@ -3019,7 +3019,7 @@ mod tests {
     ///
     /// The set is taken by value and a clone is a handle to the *same* set, so a
     /// caller that keeps one can insert into it while the dispatcher is live.
-    /// That is the interesting test â€” not that a seeded path is skipped, which
+    /// That is the interesting test — not that a seeded path is skipped, which
     /// would pass even if nothing could ever be added at run time, but that
     /// adding one changes what the dispatcher does. It is the path the user's
     /// button takes.
@@ -3118,9 +3118,9 @@ mod tests {
     ///
     /// Deliberately not `crate::win32::to_wide_str`, which appends the NUL a
     /// `PCWSTR` needs. The protocol's path field is a *used length* with no
-    /// terminator â€” `av_driver_proto::path::device_to_dos_path`, which is where
+    /// terminator — `av_driver_proto::path::device_to_dos_path`, which is where
     /// the driver's path comes from, refuses an embedded NUL and writes nothing
-    /// past the end â€” so a test built with the NUL-terminated form would be
+    /// past the end — so a test built with the NUL-terminated form would be
     /// feeding itself a message the driver never sends, and would be asserting
     /// about a path with a trailing NUL in it that Windows happens to truncate.
     fn wire_path(path: &str) -> Vec<u16> {
@@ -3129,7 +3129,7 @@ mod tests {
 
     /// A request for `path`, as the driver would send it.
     ///
-    /// The subject is the create gate's â€” an open asking `FILE_EXECUTE`. That is
+    /// The subject is the create gate's — an open asking `FILE_EXECUTE`. That is
     /// the gate most of these tests want, because it is the one that asks about
     /// everything; the tests that care which gate asked say so with
     /// [`section_request_for`].
@@ -3141,7 +3141,7 @@ mod tests {
         request
     }
 
-    /// The same, from the acquire-for-section pre-operation â€” the only gate
+    /// The same, from the acquire-for-section pre-operation — the only gate
     /// allowed to refuse.
     fn section_request_for(path: &str) -> DecisionRequestMessage {
         let mut request = DecisionRequestMessage::new(7, SubjectKind::Image);
@@ -3333,8 +3333,8 @@ mod tests {
         // The trap this guards: `answering` fills in the product's identifiers
         // and leaves the port header's `MessageId` at zero, because the port's
         // header is not the product's protocol. A reply whose `MessageId` matches
-        // no outstanding receive is not delivered at all â€” the driver waits out
-        // its timeout and allows the file â€” which looks exactly like the whole
+        // no outstanding receive is not delivered at all — the driver waits out
+        // its timeout and allows the file — which looks exactly like the whole
         // feature being unwired, and would be found only by watching a malicious
         // program run.
         let mut request = request_for(r"C:\Windows\System32\cmd.exe");
@@ -3353,8 +3353,8 @@ mod tests {
     fn only_the_red_band_blocks_and_the_yellow_band_never_does() {
         // The product rule, exhaustively: `Verdict::blocks` is the single
         // predicate, the yellow band warns and never acts, and an unknown
-        // verdict is not evidence. A second opinion here â€” "suspicious is
-        // suspicious, better safe" â€” would be a second policy, and it would
+        // verdict is not evidence. A second opinion here — "suspicious is
+        // suspicious, better safe" — would be a second policy, and it would
         // block files on a heuristic.
         assert_eq!(verdict_to_decision(Verdict::Malicious), Decision::Block);
         for verdict in [Verdict::Clean, Verdict::Suspicious, Verdict::Unknown] {
@@ -3413,7 +3413,7 @@ mod tests {
     fn the_create_gate_reports_a_detection_without_refusing_it() {
         // The create gate asks about an open carrying `FILE_EXECUTE`, and that
         // mask also answers to `FILE_TRAVERSE` and to the read-only image maps
-        // Explorer makes to draw an icon â€” so it asks about a great deal that is
+        // Explorer makes to draw an icon — so it asks about a great deal that is
         // not about to run. Refusing on that evidence quarantines a file for
         // having been *copied* (measured 2026-10-01), which is why it no longer
         // does. See [`refusing_gate`].
@@ -3422,7 +3422,7 @@ mod tests {
         // because an answer it can never act on is not worth the port thread's
         // time. The dispatcher still has to answer it correctly: a driver that
         // does send it must get a `Decision` it can use *and* a detection that
-        // reaches the vault. That is the whole of the 2026-10-15 fix â€” before
+        // reaches the vault. That is the whole of the 2026-10-15 fix — before
         // it, this arm returned `None`, so about sixty convictions in the
         // 2026-10-14 WannaCry log were log lines and nothing else.
         let dir = tempfile::tempdir().expect("a temporary directory");
@@ -3463,7 +3463,7 @@ mod tests {
         // The deadline is the whole reason the scan left this thread, so the
         // relationship it is derived from is asserted rather than described:
         // lowering the driver's wait, or widening the headroom, would otherwise
-        // be a silent way to make every decision in the product late â€” and the
+        // be a silent way to make every decision in the product late — and the
         // symptom of that is the driver's own `decisions_unanswered`, which no
         // test here can see.
         assert_eq!(
@@ -3483,7 +3483,7 @@ mod tests {
         // The defect, measured rather than imagined: the scan is allowed
         // `5 s + size / 1 MiB` and the driver waits five, so a file of a
         // megabyte or more could be answered after the driver had stopped
-        // waiting â€” `ERROR_FLT_NO_WAITER_FOR_REPLY`, `0x801F0020`, once per
+        // waiting — `ERROR_FLT_NO_WAITER_FOR_REPLY`, `0x801F0020`, once per
         // large file in the field logs. A deadline of zero is how a test says
         // "this scan has certainly not finished": the port thread can only time
         // out, and it has to answer anyway.
@@ -3528,7 +3528,7 @@ mod tests {
         // one that made a *small* file time out: `OneDriveStandaloneUpdater.exe`
         // came back `0x801F0020` in the field, behind whatever large file the
         // service was scanning at the time. Two requests with a deadline of zero
-        // are both answered at once, which is the property â€” the second is not
+        // are both answered at once, which is the property — the second is not
         // made to wait for the first file's scan.
         //
         // What this does *not* show is two workers scanning at the same instant:
@@ -3586,8 +3586,8 @@ mod tests {
         }
 
         // The wait below is only evidence if it outlasts the scan it is about,
-        // so the same file is scanned once more â€” with a dispatcher whose
-        // deadline is the real one â€” and that round trip is timed. The
+        // so the same file is scanned once more — with a dispatcher whose
+        // deadline is the real one — and that round trip is timed. The
         // abandoned scan got the same work and started earlier; the window is
         // several times what a complete scan and reply take.
         let (mut prompt, _unused) = dispatcher_watching(
@@ -3679,8 +3679,8 @@ mod tests {
     ///
     /// The defect behind this test was measured on 2026-10-10, and it is not a
     /// false positive in the ordinary sense: `Dispatcher::decide` scanned
-    /// `C:\WenleAV\wenle.exe` on every open â€” nine times in one session, about
-    /// two seconds each â€” because the driver's built-in exclusion table names
+    /// `C:\WenleAV\wenle.exe` on every open — nine times in one session, about
+    /// two seconds each — because the driver's built-in exclusion table names
     /// `C:\Program Files` and `C:\ProgramData\WenleAV` and this install was in
     /// neither. A real installation is under `Program Files` and is excluded by
     /// the driver before it ever asks, so the branch this test covers is what a
@@ -3689,7 +3689,7 @@ mod tests {
     /// afford to wait for a scan.
     ///
     /// The control arm is not decoration. Without it, a fixture that the rule
-    /// does not actually convict would pass this test while proving nothing â€”
+    /// does not actually convict would pass this test while proving nothing —
     /// and the tree check would be indistinguishable from a rule that never
     /// matched.
     #[test]
@@ -3714,7 +3714,7 @@ mod tests {
         }
 
         // The same file, with the directory holding it named as the install
-        // tree â€” which is what the failing machine's layout was.
+        // tree — which is what the failing machine's layout was.
         let own = AvPaths::with_data_dir(dir.path(), dir.path().join("data"));
         let (mut ours, _published) = dispatcher_allowing_in(
             rules_matching("MALWARE_MARKER_FOR_THE_TEST"),
@@ -3726,7 +3726,7 @@ mod tests {
             // `Reply` and not `ReplyAndReport`: nothing is refused *and* nothing
             // is convicted, so no detection is built and no toast is raised
             // about our own executable. A block would be worse than the cost
-            // this fix removes â€” it would be the product refusing to start.
+            // this fix removes — it would be the product refusing to start.
             Action::Reply(reply) => assert_eq!(
                 reply.decision,
                 Decision::Allow.as_wire(),
@@ -3737,7 +3737,7 @@ mod tests {
     }
 
     /// The same for an entry that came from the configuration instead of from a
-    /// button â€” the other half of "allow permanently", and the one that has to
+    /// button — the other half of "allow permanently", and the one that has to
     /// still be in force after a restart.
     #[test]
     fn a_path_the_configuration_excludes_is_not_scanned() {
@@ -3778,7 +3778,7 @@ mod tests {
     fn a_path_that_cannot_be_decoded_exactly_is_allowed_rather_than_guessed_at() {
         // The text decoded here is the text that gets opened. A lossy decode
         // would turn an undecodable path into some *other* file's name, and
-        // deciding about that file is deciding about the wrong one â€” so an
+        // deciding about that file is deciding about the wrong one — so an
         // undecodable path is a failure like any other, and the answer is yes.
         let mut request = DecisionRequestMessage::new(5, SubjectKind::File);
         // An unpaired high surrogate: legal in a `[u16; 1024]`, illegal in a
@@ -3796,8 +3796,8 @@ mod tests {
     #[test]
     fn the_backoff_starts_short_rises_and_stops_growing() {
         // Two faults, one test. A first delay that is long makes the ordinary
-        // race â€” the service started a moment before the driver finished
-        // loading â€” cost seconds of unprotected time. A schedule that never
+        // race — the service started a moment before the driver finished
+        // loading — cost seconds of unprotected time. A schedule that never
         // stops growing makes a driver that arrives an hour later wait an hour
         // for the service to notice.
         let mut previous = Duration::ZERO;
