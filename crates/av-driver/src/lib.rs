@@ -1726,27 +1726,34 @@ unsafe extern "C" fn process_notify(
     // within that `ULONG`, which is why the accessor exists at all rather than
     // this shifting `Flags` by a bit position this file would have to know.
     let available = unsafe { (*create_info).__bindgen_anon_1.__bindgen_anon_1 };
-    if available.FileOpenNameAvailable() == 0 {
-        return;
-    }
-
-    // SAFETY: the callback's contract is that `create_info` is a live
-    // `PS_CREATE_NOTIFY_INFO` for the duration of the call.
-    let name = unsafe { (*create_info).ImageFileName };
-    if name.is_null() {
-        return;
-    }
-    // SAFETY: non-null, and the header types it as a counted string that is
-    // valid for the duration of the callback.
-    let (buffer, length) = unsafe { ((*name).Buffer, (*name).Length as usize) };
-    if buffer.is_null() || length == 0 || length % 2 != 0 {
-        return;
-    }
-    let units = length / 2;
-    // The protocol's own maximum, not a second one: `set_path` on the worker
-    // would reject anything longer, and rejecting it here saves the allocation.
-    if units > MAX_PATH_UNITS {
-        return;
+    // The image name is not always available in this callback, and returning
+    // when it is not is how the service came to see three process starts after
+    // the driver loaded and then silence while file events kept arriving
+    // (measured on 2026-11-15). The event is queued with an empty path instead:
+    // a start the service cannot name is still a start, and every rule that
+    // does not need the name -- the sequence model, the counts, the lineage --
+    // can use it.
+    let mut buffer = core::ptr::null();
+    let mut units = 0usize;
+    if available.FileOpenNameAvailable() != 0 {
+        // SAFETY: the callback's contract is that `create_info` is a live
+        // `PS_CREATE_NOTIFY_INFO` for the duration of the call.
+        let name = unsafe { (*create_info).ImageFileName };
+        if !name.is_null() {
+            // SAFETY: non-null, and the header types it as a counted string
+            // that is valid for the duration of the callback.
+            let (candidate, length) = unsafe { ((*name).Buffer, (*name).Length as usize) };
+            if !candidate.is_null() && length != 0 && length % 2 == 0 {
+                let candidate_units = length / 2;
+                // The protocol's own maximum, not a second one: `set_path` on
+                // the worker would reject anything longer, and rejecting it
+                // here saves the allocation.
+                if candidate_units <= MAX_PATH_UNITS {
+                    buffer = candidate;
+                    units = candidate_units;
+                }
+            }
+        }
     }
 
     // The DOS form is needed **here** and not on the worker, and that is the
@@ -1760,15 +1767,22 @@ unsafe extern "C" fn process_notify(
     // SAFETY: `buffer` and `length` are the counted string the kernel handed
     // over, and its length field is the guarantee that `buffer` is valid for
     // `units` code units for the duration of this call.
-    let device = unsafe { core::slice::from_raw_parts(buffer, units) };
     let mut dos = [0u16; MAX_PATH_UNITS];
-    let Ok(path) = device_to_dos_path(device, &VOLUMES, &mut dos) else {
-        // The reasons are `device_to_dos_path`'s own — a volume with no DOS
-        // letter, an embedded NUL, a parent component, a name too long — and
-        // every one means this is not a path the service could match a rule
-        // against. Dropped rather than truncated, as before and for the same
-        // reason: a truncated path names a different file.
-        return;
+    let path: &[u16] = if units == 0 {
+        // No name was available, so there is nothing to convert and nothing
+        // the veto could match. The event is still queued, with no path.
+        &[]
+    } else {
+        let device = unsafe { core::slice::from_raw_parts(buffer, units) };
+        match device_to_dos_path(device, &VOLUMES, &mut dos) {
+            Ok(path) => path,
+            // The reasons are `device_to_dos_path`'s own — a volume with no DOS
+            // letter, an embedded NUL, a parent component, a name too long — and
+            // every one means this is not a path the service could match a rule
+            // against. Dropped rather than truncated, as before and for the same
+            // reason: a truncated path names a different file.
+            Err(_) => return,
+        }
     };
 
     // The veto, and it comes before the queue-cap check below on purpose: a
