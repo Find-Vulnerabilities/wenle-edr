@@ -229,9 +229,19 @@ function Invoke-One([string]$label, [string]$family, [string]$body) {
     # corpus is inside the same window and is not malicious, and measured on
     # 2026-11-14 a time-only label called 37,929 sequences malicious when the
     # families were a few hundred.
-    $process = Start-Process -FilePath powershell.exe -WindowStyle Hidden -PassThru -Wait -ArgumentList @(
+    # A bounded wait, because a family can hang on something outside itself:
+    # `bitsadmin /transfer` to a dead address waits for a network timeout that
+    # never comes, and with `-Wait` it hung the whole corpus -- measured on
+    # 2026-11-15, four bitsadmin processes and no progress. Sixty seconds is
+    # longer than any family here and short enough that a hang costs a minute.
+    $process = Start-Process -FilePath powershell.exe -WindowStyle Hidden -PassThru -ArgumentList @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $path
     )
+    if (-not $process.WaitForExit(60000)) {
+        Write-Output ("{0} {1} timed out after 60 s; killed" -f $label, $family)
+        $process.Kill()
+        $process.WaitForExit(5000) | Out-Null
+    }
     $end = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() * 1000
     $pid_text = if ($process) { $process.Id } else { 0 }
     $rows.Add(("{0},{1},{2},{3},{4}" -f $start, $end, $label, $family, $pid_text))
