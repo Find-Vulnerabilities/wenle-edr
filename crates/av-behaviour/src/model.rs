@@ -30,7 +30,9 @@
 use crate::sequence::{Features, LENGTH, WIDTH};
 
 /// The magic the trainer writes, and the only version this reader accepts.
-const MAGIC: &[u8; 8] = b"WENLGRU1";
+const MAGIC: &[u8; 8] = b"WENLGRU2";
+/// The previous format, read as a model whose aggregate weights are zero.
+const MAGIC_V1: &[u8; 8] = b"WENLGRU1";
 
 /// How many hidden units the exported model uses.
 ///
@@ -53,12 +55,19 @@ pub struct Model {
     b_h: Vec<f32>,
     w_o: Vec<f32>,
     b_o: Vec<f32>,
+    /// Weights for the story aggregates, or empty for a version-1 model.
+    w_a: Vec<f32>,
 }
 
 impl Model {
     /// Read a model the trainer wrote, or `None` if the bytes are not one.
     pub fn load(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < 16 || &bytes[..8] != MAGIC {
+        if bytes.len() < 16 {
+            return None;
+        }
+        let magic = &bytes[..8];
+        let version_two = magic == MAGIC;
+        if !version_two && magic != MAGIC_V1 {
             return None;
         }
         let width = u32::from_le_bytes(bytes[8..12].try_into().ok()?) as usize;
@@ -67,6 +76,16 @@ impl Model {
             return None;
         }
         let mut cursor: usize = 16;
+        if version_two {
+            if bytes.len() < 20 {
+                return None;
+            }
+            let declared = u32::from_le_bytes(bytes[16..20].try_into().ok()?) as usize;
+            if declared != crate::sequence::AGGREGATES {
+                return None;
+            }
+            cursor = 20;
+        }
         let mut take = |count: usize| -> Option<Vec<f32>> {
             let bytes_needed = count.checked_mul(4)?;
             let header = cursor.checked_add(4)?;
@@ -97,6 +116,11 @@ impl Model {
             b_h: take(HIDDEN)?,
             w_o: take(HIDDEN)?,
             b_o: take(1)?,
+            w_a: if version_two {
+                take(crate::sequence::AGGREGATES)?
+            } else {
+                Vec::new()
+            },
         };
         if cursor != bytes.len() {
             return None;
@@ -122,6 +146,12 @@ impl Model {
         let mut logit = self.b_o[0];
         for index in 0..HIDDEN {
             logit += self.w_o[index] * hidden[index];
+        }
+        if !self.w_a.is_empty() {
+            let story = crate::sequence::aggregates(events);
+            for index in 0..self.w_a.len() {
+                logit += self.w_a[index] * story[index];
+            }
         }
         sigmoid(logit)
     }
@@ -187,6 +217,7 @@ mod tests {
         bytes.extend_from_slice(MAGIC);
         bytes.extend_from_slice(&(WIDTH as u32).to_le_bytes());
         bytes.extend_from_slice(&(HIDDEN as u32).to_le_bytes());
+        bytes.extend_from_slice(&(crate::sequence::AGGREGATES as u32).to_le_bytes());
         let mut push = |count: usize| {
             bytes.extend_from_slice(&(count as u32).to_le_bytes());
             for _ in 0..count {
@@ -204,6 +235,7 @@ mod tests {
         push(HIDDEN);
         push(HIDDEN);
         push(1);
+        push(crate::sequence::AGGREGATES);
         bytes
     }
 

@@ -55,8 +55,32 @@ def main():
     malicious = [item for item in sequences if item[0] == "malicious"]
     benign = [item for item in sequences if item[0] != "malicious"]
     if len(benign) > args.max_benign:
-        chosen = rng.choice(len(benign), size=args.max_benign, replace=False)
-        benign = [benign[index] for index in chosen]
+        # Balanced by the process image the story belongs to, not sampled at
+        # random: a random draw of this machine's log is mostly the shell that
+        # runs the harness, and a model calibrated on that has never seen a
+        # browser, a package manager or a build. The image class is the last
+        # event's image feature, which is class/8; round it back.
+        groups = {}
+        for index in range(len(benign)):
+            image = int(round(benign[index][2][-1][33] * 8))
+            groups.setdefault(image, []).append(index)
+        share = max(1, args.max_benign // len(groups))
+        picked = []
+        for image in sorted(groups):
+            members = groups[image]
+            rng.shuffle(members)
+            picked.extend(members[:share])
+        remaining = args.max_benign - len(picked)
+        if remaining > 0:
+            taken = set(picked)
+            leftovers = [index for index in range(len(benign)) if index not in taken]
+            picked.extend(rng.choice(leftovers, size=min(remaining, len(leftovers)), replace=False).tolist())
+        benign = [benign[index] for index in sorted(picked)]
+        counts = {}
+        for item in benign:
+            image = int(round(item[2][-1][33] * 8))
+            counts[image] = counts.get(image, 0) + 1
+        print("benign by image class: %s" % sorted(counts.items()))
     print("keeping %d malicious and %d benign" % (len(malicious), len(benign)))
 
     items = malicious + benign

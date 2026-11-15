@@ -228,6 +228,47 @@ impl Features {
     }
 }
 
+/// How many numbers summarise a whole story for the classifier.
+///
+/// The GRU reads the events in order; these read the story as a composition,
+/// which is the part a build and a dropper differ in most. A build is mostly
+/// writes with image loads and no registry writes; a dropper is a process start,
+/// a handful of writes into a temporary directory and a child process. The
+/// hidden state can in principle count, but five thousand sequences are not
+/// enough for it to learn counting, and a feature is a fact rather than a hope.
+pub const AGGREGATES: usize = 12;
+
+/// The story as twelve numbers.
+///
+/// Actions and extensions are fractions rather than counts, so a long story and
+/// a short one are comparable. `0.0` for an empty story.
+pub fn aggregates(events: &[Features]) -> [f32; AGGREGATES] {
+    let mut out = [0.0f32; AGGREGATES];
+    if events.is_empty() {
+        return out;
+    }
+    let total = events.len() as f32;
+    for event in events {
+        let data = &event.0;
+        out[0] += data[3]; // ProcessStarted
+        out[1] += data[1]; // FileWritten
+        out[2] += data[8]; // FileRenamed
+        out[3] += data[9]; // FileDeleted
+        out[4] += data[10]; // RegistryChanged
+        out[5] += data[2]; // ImageLoaded
+        out[6] += data[11]; // temp path class
+        out[7] += data[18]; // executable extension
+        out[8] += data[19]; // script extension
+        out[9] += data[20]; // document extension
+        out[10] += data[32]; // log-scaled gap
+    }
+    for value in out.iter_mut().take(11) {
+        *value /= total;
+    }
+    out[11] = (events.len() as f32 / LENGTH as f32).min(1.0);
+    out
+}
+
 /// One process's sequence of events.
 ///
 /// The newest [`LENGTH`] events, oldest first, plus the identity a report needs.

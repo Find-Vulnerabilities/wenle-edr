@@ -32,6 +32,7 @@ import numpy as np
 WIDTH = 35
 LENGTH = 64
 HIDDEN = 32
+AGGREGATES = 12
 MAX_GAP_US = 5_000_000
 
 
@@ -186,13 +187,17 @@ class GRU:
         self.b_h = np.zeros(HIDDEN, dtype=np.float32)
         self.w_o = rng.uniform(-scale, scale, size=(1, HIDDEN)).astype(np.float32)
         self.b_o = np.zeros(1, dtype=np.float32)
+        # Aggregates are a dozen already-normalised numbers; starting them at
+        # zero lets the sequence and the composition earn their weights from the
+        # data rather than from the initialisation.
+        self.w_a = np.zeros((1, AGGREGATES), dtype=np.float32)
 
     def params(self):
         return [
             self.w_z, self.u_z, self.b_z,
             self.w_r, self.u_r, self.b_r,
             self.w_h, self.u_h, self.b_h,
-            self.w_o, self.b_o,
+            self.w_o, self.b_o, self.w_a,
         ]
 
     def forward(self, batch):
@@ -208,12 +213,13 @@ class GRU:
             previous = h
             h = (1.0 - z) * h + z * candidate
             cache.append((x, previous, z, r, candidate))
-        logits = h @ self.w_o.T + self.b_o
+        aggregates = batch_aggregates(batch)
+        logits = h @ self.w_o.T + self.b_o + aggregates @ self.w_a.T
         probability = sigmoid(logits)
-        return probability, (cache, h)
+        return probability, (cache, h, aggregates)
 
     def backward(self, batch, probability, labels, cache, sample_weight):
-        cache_steps, final_h = cache
+        cache_steps, final_h, aggregates = cache
         batch_size = batch.shape[0]
         grads = [np.zeros_like(parameter) for parameter in self.params()]
 
@@ -221,6 +227,7 @@ class GRU:
         delta_out = ((probability - labels) * sample_weight).astype(np.float32)  # (batch, 1)
         grads[9] += delta_out.T @ final_h
         grads[10] += delta_out.sum(axis=0)
+        grads[11] += delta_out.T @ aggregates
 
         delta_h = delta_out @ self.w_o
         for step in reversed(range(LENGTH)):
@@ -251,6 +258,21 @@ class GRU:
             delta_h_prev += d_r @ self.u_r
             delta_h = delta_h_prev
         return grads
+
+
+def batch_aggregates(batch):
+    """The story as twelve numbers, mirroring the Rust `aggregates`.
+
+    Padding rows are all zeros, so a row whose sum is zero is not an event. The
+    reader of this file and the service compute the same twelve numbers, which is
+    the only reason a model trained here can be served there.
+    """
+    mask = (np.abs(batch).sum(axis=2) > 0).astype(np.float32)  # (B, 64)
+    total = mask.sum(axis=1, keepdims=True).clip(min=1.0)
+    columns = [3, 1, 8, 9, 10, 2, 11, 18, 19, 20, 32]
+    fractions = [(batch[:, :, index] * mask).sum(axis=1, keepdims=True) / total for index in columns]
+    length = (total / LENGTH).clip(max=1.0)
+    return np.concatenate(fractions + [length], axis=1).astype(np.float32)
 
 
 def sigmoid(value):
@@ -300,7 +322,7 @@ def train(model, sequences, labels, epochs, class_weight):
 
 
 PARAMETER_NAMES = [
-    "w_z", "u_z", "b_z", "w_r", "u_r", "b_r", "w_h", "u_h", "b_h", "w_o", "b_o",
+    "w_z", "u_z", "b_z", "w_r", "u_r", "b_r", "w_h", "u_h", "b_h", "w_o", "b_o", "w_a",
 ]
 
 
@@ -310,8 +332,8 @@ def setattr_parameter(model, index, value):
 
 def export(model, path):
     with open(path, "wb") as handle:
-        handle.write(b"WENLGRU1")
-        handle.write(struct.pack("<II", WIDTH, HIDDEN))
+        handle.write(b"WENLGRU2")
+        handle.write(struct.pack("<III", WIDTH, HIDDEN, AGGREGATES))
         for name in PARAMETER_NAMES:
             value = getattr(model, name).astype("<f4")
             handle.write(struct.pack("<I", value.size))
