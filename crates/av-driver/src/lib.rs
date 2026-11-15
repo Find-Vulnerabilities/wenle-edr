@@ -3422,7 +3422,13 @@ const MAX_PENDING_STATE_EVENTS: usize = 8;
 /// blocks of about 2 KiB is 128 KiB, and a machine that has 64 processes
 /// starting at once while the service is not draining is a machine with a
 /// bigger problem than a dropped notification.
-const MAX_PENDING_PROCESS_EVENTS: usize = 64;
+// Sixty-four was measured to be too small: a burst of starts while the service
+// was reading a scan filled it and every later process event was dropped, so
+// behaviour monitoring went blind while file events kept arriving (2026-11-15).
+// Five hundred and twelve is eight times the burst the machine produces and
+// still a bound: with the hundred-millisecond send it caps a stalled worker at
+// under a minute rather than for ever.
+const MAX_PENDING_PROCESS_EVENTS: usize = 512;
 
 /// How many rename and delete notifications may be waiting for a worker
 /// thread.
