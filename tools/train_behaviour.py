@@ -89,7 +89,7 @@ def label_for(timestamp, windows):
     return None, None
 
 
-def build_sequences(events, windows):
+def build_sequences(events, windows, descendants=False):
     """Group events by process and contiguous time, then label the group.
 
     A group is broken when the process changes or more than `MAX_GAP_US`
@@ -127,12 +127,20 @@ def build_sequences(events, windows):
 
     def owner_of(pid):
         """The window whose process this pid descends from, if any."""
-        # Exactly the process the window started, not its descendants.
-        # Measured on 2026-11-15: labelling descendants too made the family's
-        # conhost and cmd stories malicious, which is ordinary behaviour, and a
-        # model trained on that could not put a single family above 0.98. The
-        # root is the process that did the writing and the starting.
-        return owner.get(pid)
+        # Two label shapes, both measured. Descendants: the technique's own
+        # children are the technique -- `certutil` under a runner shell does the
+        # download -- and a corpus that labels only the shell shows the model
+        # the shell. Root only: a family's conhost and cmd are ordinary, and
+        # labelling them malicious taught the model nothing (2026-11-15).
+        if not descendants:
+            return owner.get(pid)
+        seen = set()
+        while pid and pid not in seen:
+            if pid in owner:
+                return owner[pid]
+            seen.add(pid)
+            pid = parent.get(pid, 0)
+        return None
 
     labelled = []
     for pid, items in sequences:

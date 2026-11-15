@@ -41,6 +41,7 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--max-benign", type=int, default=3000)
     parser.add_argument("--seed", type=int, default=5)
+    parser.add_argument("--descendants", action="store_true", help="label the process tree, not just the root")
     args = parser.parse_args()
 
     events = []
@@ -48,7 +49,7 @@ def main():
         events.extend(load_events(args.log_extra))
     events.extend(load_events(args.log))
     windows = load_windows(args.labels)
-    sequences = build_sequences(events, windows)
+    sequences = build_sequences(events, windows, descendants=args.descendants)
     print("events %d, windows %d, sequences %d" % (len(events), len(windows), len(sequences)))
 
     rng = np.random.default_rng(args.seed)
