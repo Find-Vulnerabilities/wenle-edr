@@ -122,7 +122,16 @@ pub const REALTIME_DRAIN_CAP: usize = 64;
 /// transitions a service start produces. A burst here means the driver is
 /// reporting something unusual, and the loop should get back to answering
 /// clients rather than drain it in one pass.
-pub const DRIVER_DRAIN_CAP: usize = 32;
+/// How many driver events one drain pass takes.
+///
+/// Thirty-two per pass was a backlog that grew: the control loop drains
+/// once per hundred milliseconds, so the ceiling was 320 events a second
+/// whatever the machine did, and a build produces thousands. Measured on
+/// 2026-11-15: a staged-dropper detection arrived 127 seconds after the
+/// family ran, because the write events behind it were still queued.
+/// A thousand and twenty-four per pass keeps a pass cheap and the backlog
+/// moving.
+pub const DRIVER_DRAIN_CAP: usize = 1024;
 
 /// How many finished process walks are absorbed per control-loop pass.
 ///
