@@ -127,13 +127,12 @@ def build_sequences(events, windows):
 
     def owner_of(pid):
         """The window whose process this pid descends from, if any."""
-        seen = set()
-        while pid and pid not in seen:
-            if pid in owner:
-                return owner[pid]
-            seen.add(pid)
-            pid = parent.get(pid, 0)
-        return None
+        # Exactly the process the window started, not its descendants.
+        # Measured on 2026-11-15: labelling descendants too made the family's
+        # conhost and cmd stories malicious, which is ordinary behaviour, and a
+        # model trained on that could not put a single family above 0.98. The
+        # root is the process that did the writing and the starting.
+        return owner.get(pid)
 
     labelled = []
     for pid, items in sequences:

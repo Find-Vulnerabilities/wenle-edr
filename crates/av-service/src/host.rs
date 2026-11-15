@@ -1947,13 +1947,48 @@ impl Host {
                     }
                     if story.len() % 8 == 0 {
                         let score = model.score(story);
-                        if score >= 0.995 {
+                        // The model decides at the one point where it has been
+                        // measured safe: a score of 0.99 or more on twenty
+                        // thousand stories from this machine produced no false
+                        // positive. Below that it only weighs rules, because at
+                        // 0.97 a tenth of ordinary work scores as high.
+                        // PowerShell writes `__PSScriptPolicyTest_*.psm1` into
+                        // temp at start-up and runs it; the model scores it 0.996
+                        // and would convict every shell launch. Measured on
+                        // 2026-11-15, two of them in a single benign pass.
+                        let policy_test = record
+                            .path
+                            .as_deref()
+                            .map(|path| path.to_ascii_lowercase().contains("__psscriptpolicytest"))
+                            .unwrap_or(false);
+                        if score >= 0.99 && !policy_test {
                             log::warn!(
-                                "behaviour: sequence model scored {:.3} for pid {} ({})",
+                                "behaviour: sequence model scored {:.3} for pid {} ({}), reported as malicious",
                                 score,
                                 record.process_id,
                                 record.path.as_deref().unwrap_or("")
                             );
+                            let path = record
+                                .path
+                                .as_deref()
+                                .map(std::path::PathBuf::from)
+                                .unwrap_or_default();
+                            out.push(Event::Detection(Detection {
+                                file_name: file_name_of(&path),
+                                path,
+                                verdict: Verdict::Malicious,
+                                score: (score * 100.0).round() as u16,
+                                severity: av_core::Severity::High,
+                                threat: None,
+                                rules: vec!["behaviour/sequence-model".to_string()],
+                                action: DetectionAction::Reported,
+                                source: EntrySource::Behaviour,
+                                size: 0,
+                                at: Utc::now(),
+                                in_process: None,
+                                terminated: false,
+                                phase: Phase::observed(EntrySource::Behaviour, false),
+                            }));
                         }
                     }
                 }
