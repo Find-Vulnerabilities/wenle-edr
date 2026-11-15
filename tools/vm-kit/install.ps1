@@ -21,6 +21,16 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     Fail 'run this from an elevated PowerShell'
 }
 
+# The old driver, when this is a reinstall, enforces the product's write gate:
+# it refuses writes into C:\WenleAV for every process, administrators included,
+# and an undeletable file owned by the user is exactly that. The service and the
+# filter go first.
+Get-Process -Name 'wenle-av-service*' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+if (fltmc filters 2>$null | Select-String 'WenleAvFilter') {
+    fltmc unload WenleAvFilter 2>&1 | Out-Null
+    Start-Sleep -Seconds 2
+}
+
 # An earlier attempt may have left the product directory owned by SYSTEM with
 # Administrators denied, or a service holding the old binary; both make the copy
 # below an access denial with no explanation in the message.
