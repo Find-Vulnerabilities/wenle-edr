@@ -261,6 +261,39 @@ impl Staging {
                         });
                     }
                 }
+                // Fileless: a script host told to hide, decode and fetch. Each
+                // of the three is ordinary alone -- a hidden window is a policy,
+                // an encoding is a deployment, a download is an update -- and
+                // together they are the shape of code that never becomes a file.
+                if let Some(command_line) = record.command_line.as_deref() {
+                    let lower = command_line.to_ascii_lowercase();
+                    let hidden = lower.contains("-windowstyle hidden") || lower.contains("-w hidden");
+                    let encoded = lower.contains("-enc") || lower.contains("-encodedcommand");
+                    let fetch = lower.contains("downloadstring")
+                        || lower.contains("downloadfile")
+                        || lower.contains("invoke-webrequest")
+                        || lower.contains("net.webclient")
+                        || lower.contains("frombase64string");
+                    let reflect = lower.contains("reflection.assembly")
+                        || lower.contains("virtualalloc")
+                        || lower.contains("createthread");
+                    if hidden && (encoded || fetch || reflect) {
+                        hits.push(Hit {
+                            id: "behaviour/fileless-script",
+                            score: 120,
+                            path: record.path.clone().unwrap_or_default(),
+                            description: "A hidden script host decoded or fetched code instead of running a file.".to_string(),
+                        });
+                    }
+                    if lower.contains("__eventfilter") || lower.contains("commandlineeventconsumer") {
+                        hits.push(Hit {
+                            id: "behaviour/wmi-subscription",
+                            score: 130,
+                            path: record.path.clone().unwrap_or_default(),
+                            description: "A WMI event subscription was created, which runs without a file or a service.".to_string(),
+                        });
+                    }
+                }
                 // The document-to-script chain. `class_of` for the parent is
                 // what the service learned when it saw that parent start; a
                 // parent it never saw is class 8 and cannot be Office.
@@ -275,6 +308,32 @@ impl Staging {
                         path: record.path.clone().unwrap_or_default(),
                         description: "A document or browser process started a script host.".to_string(),
                     });
+                }
+            }
+            Action::ImageLoaded => {
+                // Bring your own vulnerable driver: a signed driver loaded from
+                // somewhere a driver has no business being. The kernel trusts a
+                // signed driver, so a signature check cannot help; the location
+                // can, and the name of a build whose vulnerability is public can
+                // help even inside the driver directory.
+                if let Some(path) = record.path.as_deref() {
+                    let lower = path.to_ascii_lowercase();
+                    if lower.ends_with(".sys") && !lower.contains("\\system32\\drivers\\") {
+                        hits.push(Hit {
+                            id: "behaviour/byovd-image",
+                            score: 110,
+                            path: path.to_string(),
+                            description: "A driver was loaded from outside the system's driver directory.".to_string(),
+                        });
+                    }
+                    if lower.ends_with(".sys") && VULNERABLE_DRIVERS.iter().any(|name| lower.ends_with(name)) {
+                        hits.push(Hit {
+                            id: "behaviour/byovd-known",
+                            score: 130,
+                            path: path.to_string(),
+                            description: "A driver with a known vulnerable build was loaded.".to_string(),
+                        });
+                    }
                 }
             }
             Action::FileRenamed => {
@@ -338,6 +397,18 @@ impl Staging {
         hits
     }
 }
+
+/// Drivers that bring their own vulnerability, by the names security products
+/// have published. A name is weaker than a hash and stronger than nothing: the
+/// list catches the driver someone downloaded and did not rename, and the
+/// location rule beside it catches the one that was renamed.
+const VULNERABLE_DRIVERS: &[&str] = &[
+    "gdrv.sys", "rtcore64.sys", "iqvw64e.sys", "msio64.sys", "msio32.sys",
+    "eneio64.sys", "eneio.sys", "cpuz149.sys", "cpuz.sys", "winio64.sys",
+    "winio.sys", "inpoutx64.sys", "inpout32.sys", "asmmap64.sys", "atillk64.sys",
+    "dbgv.sys", "dbk64.sys", "kprocesshacker.sys", "procexp152.sys",
+    "speedfan.sys", "zntx64.sys", "hw64.sys", "amdryzenmasterdriver.sys",
+];
 
 /// Extensions that ransomware renames.
 fn document_extension(path: &str) -> bool {
@@ -630,6 +701,105 @@ mod tests {
         );
         plain.command_line = Some(r"certutil -dump C:\Windows\Temp\a.cer".to_string());
         assert!(staging.observe(&plain, |_| None).is_empty());
+    }
+
+    #[test]
+    fn a_driver_from_a_user_directory_is_byovd() {
+        let mut staging = Staging::new();
+        let event = event(
+            Action::ImageLoaded,
+            10,
+            1,
+            r"C:\Windows\Temp\payload.sys",
+            1_000,
+        );
+        let hits = staging.observe(&event, |_| None);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].id, "behaviour/byovd-image");
+    }
+
+    #[test]
+    fn a_driver_from_the_driver_directory_is_not() {
+        let mut staging = Staging::new();
+        let event = event(
+            Action::ImageLoaded,
+            10,
+            1,
+            r"C:\Windows\System32\drivers\tcpip.sys",
+            1_000,
+        );
+        assert!(staging.observe(&event, |_| None).is_empty());
+    }
+
+    #[test]
+    fn a_known_vulnerable_driver_loaded_from_the_driver_directory_is_still_byovd() {
+        let mut staging = Staging::new();
+        let event = event(
+            Action::ImageLoaded,
+            10,
+            1,
+            r"C:\Windows\System32\drivers\gdrv.sys",
+            1_000,
+        );
+        let hits = staging.observe(&event, |_| None);
+        assert!(
+            hits.iter().any(|hit| hit.id == "behaviour/byovd-known"),
+            "{hits:?}"
+        );
+    }
+
+    #[test]
+    fn a_hidden_script_that_fetches_is_fileless_and_a_hidden_one_alone_is_not() {
+        let mut staging = Staging::new();
+        let mut fetch = event(
+            Action::ProcessStarted,
+            11,
+            10,
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            1_000,
+        );
+        fetch.command_line = Some(
+            r"powershell -WindowStyle Hidden -Command IEX (New-Object Net.WebClient).DownloadString('http://127.0.0.1/x')"
+                .to_string(),
+        );
+        let hits = staging.observe(&fetch, |_| None);
+        assert!(
+            hits.iter().any(|hit| hit.id == "behaviour/fileless-script"),
+            "{hits:?}"
+        );
+
+        let mut hidden = event(
+            Action::ProcessStarted,
+            12,
+            10,
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            2_000,
+        );
+        hidden.command_line = Some(r"powershell -WindowStyle Hidden -Command Get-Date".to_string());
+        assert!(staging
+            .observe(&hidden, |_| None)
+            .iter()
+            .all(|hit| hit.id != "behaviour/fileless-script"));
+    }
+
+    #[test]
+    fn a_wmi_subscription_is_a_hit() {
+        let mut staging = Staging::new();
+        let mut event = event(
+            Action::ProcessStarted,
+            13,
+            10,
+            r"C:\Windows\System32\wbem\WMIC.exe",
+            3_000,
+        );
+        event.command_line = Some(
+            r"wmic /namespace:\root\subscription PATH __EventFilter CREATE Name='x'".to_string(),
+        );
+        let hits = staging.observe(&event, |_| None);
+        assert!(
+            hits.iter().any(|hit| hit.id == "behaviour/wmi-subscription"),
+            "{hits:?}"
+        );
     }
 
     #[test]

