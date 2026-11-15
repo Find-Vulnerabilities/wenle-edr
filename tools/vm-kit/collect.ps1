@@ -81,11 +81,11 @@ if ($size -lt 1MB) {
 
 Copy-Item $log (Join-Path $Output 'behaviour.log') -Force
 Copy-Item 'C:\ProgramData\WenleAV\logs\service.log' (Join-Path $Output 'service.log') -Force
-if (Test-Path $labels) {
-    Copy-Item $labels (Join-Path $Output 'labels.csv') -Force
-} else {
+# $labels is already $Output\labels.csv -- the corpus copy and the techniques
+# appended their rows to it -- so copying it there is copying a file onto itself.
+if (-not (Test-Path $labels)) {
     $corpusLabels = 'C:\WenleAV\test\corpus\labels.csv'
-    if (Test-Path $corpusLabels) { Copy-Item $corpusLabels (Join-Path $Output 'labels.csv') -Force }
+    if (Test-Path $corpusLabels) { Copy-Item $corpusLabels $labels -Force }
 }
 
 $zip = Join-Path $Output ("collection-{0}.zip" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
