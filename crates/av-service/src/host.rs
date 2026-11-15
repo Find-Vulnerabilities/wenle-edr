@@ -2018,7 +2018,7 @@ impl Host {
                             hit.path,
                             hit.description,
                             model_score,
-                            Utc::now().format("%Y-%m-%d %H:%M:%S%.3f")
+                            chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f")
                         );
                         // The same shape the rule engine's findings produce, so
                         // that a front end reads one kind of detection however
