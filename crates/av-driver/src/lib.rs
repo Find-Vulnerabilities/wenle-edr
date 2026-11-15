@@ -4819,9 +4819,19 @@ extern "system" fn port_disconnect(connection_context: *mut c_void) {
     // connected. A null context has nothing to compare and clears: that is the
     // shape a connection made before this cookie existed would have, and a port
     // that is gone must not stay in the slot.
+    // A teardown that cannot be attributed to a connection must not clear
+    // the slot: a null context is a disconnect whose connect callback did
+    // not leave a cookie, and clearing on it lets one stale teardown kill a
+    // live connection -- after which every FltSendMessage fails and the
+    // service reports itself connected while receiving nothing. Measured on
+    // 2026-11-15: an interval of total event silence with the connection
+    // logged as up.
+    if connection_context.is_null() {
+        return;
+    }
     let mut current = CLIENT_PORT.load(Ordering::Acquire);
     loop {
-        if !connection_context.is_null() && current != connection_context {
+        if current != connection_context {
             return;
         }
         match CLIENT_PORT.compare_exchange(
