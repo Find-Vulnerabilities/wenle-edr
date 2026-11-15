@@ -2246,7 +2246,12 @@ const INBOX_POLL: Duration = Duration::from_millis(50);
 /// milliseconds), and the one dispatch thread blocked inside decision scans,
 /// which is what [`Lane`] splits apart. Forty for forty was measured after
 /// both changes.
-const RECEIVE_THREADS: usize = 1;
+// Four, not one. With a single receive thread, a decision scan holds the only
+// reader for as long as it takes and the driver's process events -- which wait
+// a hundred milliseconds -- time out and are dropped: measured on 2026-11-15,
+// 200 writes then ten process starts produced zero starts. Four lets the scans
+// take three readers while one keeps the port drained.
+const RECEIVE_THREADS: usize = 4;
 
 /// The name the driver registers its filter under, which is what `fltmc`
 /// prints and what the watchdog looks for when it asks whether the driver is
