@@ -21,6 +21,23 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     Fail 'run this from an elevated PowerShell'
 }
 
+# An earlier attempt may have left the product directory owned by SYSTEM with
+# Administrators denied, or a service holding the old binary; both make the copy
+# below an access denial with no explanation in the message.
+$productDir = 'C:\WenleAV'
+if (Test-Path $productDir) {
+    takeown /f $productDir /r /d Y 2>$null | Out-Null
+    icacls $productDir /grant '*S-1-5-32-544:F' /t 2>$null | Out-Null
+}
+$existingService = Get-Service -Name 'WenleAvService' -ErrorAction SilentlyContinue
+if ($existingService -and $existingService.Status -ne 'Stopped') {
+    sc.exe stop WenleAvService 2>&1 | Out-Null
+    Start-Sleep -Seconds 3
+}
+if (Test-Path (Join-Path $productDir 'wenle-av-service.exe')) {
+    Remove-Item (Join-Path $productDir 'wenle-av-service.exe') -Force -ErrorAction SilentlyContinue
+}
+
 $signing = bcdedit /enum '{current}' 2>$null | Select-String 'testsigning'
 if (-not ($signing -and $signing.Line -match 'Yes')) {
     Write-Output 'enabling test signing; the guest must be restarted and this script run again'
