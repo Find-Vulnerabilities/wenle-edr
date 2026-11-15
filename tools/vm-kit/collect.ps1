@@ -61,6 +61,15 @@ for ($round = 1; $round -le $Rounds; $round++) {
     & $Corpus 2>&1 | Out-Null
 }
 
+# The corpus families into the collection's labels first, then the ATT&CK
+# techniques, which append theirs beside them.
+$corpusLabels = 'C:\WenleAV\test\corpus\labels.csv'
+if (Test-Path $corpusLabels) {
+    Copy-Item $corpusLabels $labels -Force
+}
+Write-Output 'running ATT&CK techniques'
+& (Join-Path $PSScriptRoot 'techniques.ps1') -Output $Output 2>&1 | Out-Null
+
 $log = 'C:\ProgramData\WenleAV\logs\behaviour.log'
 if (-not (Test-Path $log)) {
     Fail "no behaviour log at $log; the service is not collecting (check WENLE_BEHAVIOUR_LOG in the service environment)."
