@@ -2011,13 +2011,14 @@ impl Host {
                             _ => 0,
                         };
                         log::warn!(
-                            "behaviour: {} (pid {}, score {}): {} {} (model {:?})",
+                            "behaviour: {} (pid {}, score {}): {} {} (model {:?}, detected {})",
                             hit.id,
                             record.process_id,
                             hit.score + agreement,
                             hit.path,
                             hit.description,
-                            model_score
+                            model_score,
+                            Utc::now().format("%Y-%m-%d %H:%M:%S%.3f")
                         );
                         // The same shape the rule engine's findings produce, so
                         // that a front end reads one kind of detection however
