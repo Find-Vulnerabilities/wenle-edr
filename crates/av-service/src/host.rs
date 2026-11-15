@@ -277,6 +277,12 @@ pub struct Host {
     /// it. Filled from the process starts the driver reported; a process that
     /// started before the service was listening is class 8, "not known".
     behaviour_images: std::collections::HashMap<u32, u8>,
+    /// When a process start was last reported, and whether the silence has
+    /// already been reported. A driver whose process notifications have stopped
+    /// looks exactly like a machine where nothing starts; this makes the
+    /// difference visible instead of inferring it from an empty log.
+    last_process_event: Option<std::time::Instant>,
+    process_gap_warned: bool,
     /// The sequence model, when one is installed.
     ///
     /// Report-only and deliberately so: measured on 2026-11-14 it reached AUC
@@ -536,6 +542,8 @@ impl Host {
             behaviour_log: crate::behaviour_log::from_environment(),
             behaviour_last: std::collections::HashMap::new(),
             behaviour_images: std::collections::HashMap::new(),
+            last_process_event: None,
+            process_gap_warned: false,
             behaviour_model: behaviour_model_from_environment(),
             behaviour_stories: std::collections::HashMap::new(),
             staging: av_behaviour::Staging::new(),
