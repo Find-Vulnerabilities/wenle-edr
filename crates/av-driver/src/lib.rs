@@ -1886,13 +1886,20 @@ unsafe extern "C" fn process_notify(
     pending.path[..path.len()].copy_from_slice(path);
 
     unsafe {
-        queue_pending(
-            block.cast::<c_void>(),
-            flt::PROCESS_EVENT_TAG,
-            process_event_worker,
-            &PENDING_PROCESS_EVENTS,
-            filter,
+        send_process_event(
+            pending.event.sequence,
+            pending.event.now_100ns,
+            pending.event.action,
+            pending.event.process_id,
+            pending.parent_process_id,
+            &pending.path[..pending.units as usize],
         );
+        flt::ExFreePoolWithTag(block.cast::<c_void>(), flt::PROCESS_EVENT_TAG);
+        // Sent from the callback rather than queued (experiment, 2026-11-15):
+        // the work-item queue stopped running after a handful of items while
+        // file events kept arriving, and this tells "the queue stalls" from
+        // "the port refuses" in one measurement. The callback runs at
+        // PASSIVE_LEVEL, which is what `send_event` requires.
     }
 }
 
