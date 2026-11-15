@@ -1972,15 +1972,44 @@ impl Host {
                         );
                     }
                     let images = &self.behaviour_images;
+                    // The sequence model's read on the same process, when there
+                    // is one. Fusion and not a second opinion: an agreement
+                    // raises a detector's score and a disagreement changes
+                    // nothing, because a model measured at 2.8 % recall may not
+                    // veto a detector measured at zero false positives over ten
+                    // rounds of ordinary work.
+                    let model_score = self.behaviour_model.as_ref().and_then(|model| {
+                        // The detector's hit lands on a process start, when the
+                        // started process has one event. The story with the
+                        // writing in it belongs to whoever started it, so the
+                        // child is preferred only when it is old enough to say
+                        // something.
+                        let story = self
+                            .behaviour_stories
+                            .get(&record.process_id)
+                            .filter(|story| story.len() >= 8)
+                            .or_else(|| {
+                                self.behaviour_stories
+                                    .get(&record.parent_process_id)
+                                    .filter(|story| story.len() >= 8)
+                            });
+                        story.map(|story| model.score(story))
+                    });
                     let hits = self.staging.observe(&record, |pid| images.get(&pid).copied());
                     for hit in hits {
+                        let agreement = match model_score {
+                            Some(score) if score >= 0.95 => 20,
+                            Some(score) if score >= 0.90 => 10,
+                            _ => 0,
+                        };
                         log::warn!(
-                            "behaviour: {} (pid {}, score {}): {} {}",
+                            "behaviour: {} (pid {}, score {}): {} {} (model {:?})",
                             hit.id,
                             record.process_id,
-                            hit.score,
+                            hit.score + agreement,
                             hit.path,
-                            hit.description
+                            hit.description,
+                            model_score
                         );
                         // The same shape the rule engine's findings produce, so
                         // that a front end reads one kind of detection however
@@ -1996,7 +2025,13 @@ impl Host {
                             score: hit.score,
                             severity: av_core::Severity::High,
                             threat: None,
-                            rules: vec![hit.id.to_string()],
+                            rules: {
+                                let mut rules = vec![hit.id.to_string()];
+                                if agreement > 0 {
+                                    rules.push("behaviour/sequence-model".to_string());
+                                }
+                                rules
+                            },
                             action: DetectionAction::Reported,
                             source: EntrySource::Behaviour,
                             size: 0,
