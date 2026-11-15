@@ -828,8 +828,17 @@ fn gate_grace() -> Duration {
         .unwrap_or(GATE_GRACE)
 }
 
-const DECISION_DEADLINE: Duration =
-    Duration::from_millis(DecisionPolicy::DEFAULT_TIMEOUT_MS as u64).saturating_sub(REPLY_HEADROOM);
+/// How long a receive thread waits for a decision scan before answering
+/// `Allow` and letting the scan report late.
+///
+/// It used to be the driver's own five-second clock, and that was the wrong
+/// thing to wait for: this product's gate answers `Allow` on every path, so
+/// the wait bought only detection-at-the-gate while it held a receive thread
+/// for seconds and starved the event stream. Measured on 2026-11-15: a
+/// staged-dropper hit arrived 35.6 seconds after the family ran, because the
+/// write's decision was queued behind other scans. A quarter second is enough
+/// for a small file, and everything slower is reported by `report_late`.
+const DECISION_DEADLINE: Duration = Duration::from_millis(250);
 
 /// One decision scan, handed to a worker.
 struct ScanJob {

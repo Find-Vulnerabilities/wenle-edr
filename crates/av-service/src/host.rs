@@ -1732,9 +1732,10 @@ impl Host {
                     // be seen on a machine whose log level says `debug`, which
                     // is how this field was verified.
                     log::debug!(
-                        "process {} started, created by {}: {}",
+                        "process {} started, created by {} (callback {}): {}",
                         reported.process_id,
                         reported.parent_process_id,
+                        reported.detail,
                         reported
                             .path
                             .as_ref()

@@ -1725,6 +1725,7 @@ unsafe extern "C" fn process_notify(
     // `ULONG`, and the bitfield unit is the header's declaration of the bits
     // within that `ULONG`, which is why the accessor exists at all rather than
     // this shifting `Flags` by a bit position this file would have to know.
+    let calls = PROCESS_NOTIFY_CALLS.fetch_add(1, Ordering::Relaxed) + 1;
     let available = unsafe { (*create_info).__bindgen_anon_1.__bindgen_anon_1 };
     // The image name is not always available in this callback, and returning
     // when it is not is how the service came to see three process starts after
@@ -1868,7 +1869,7 @@ unsafe extern "C" fn process_notify(
     // callback returns. `HANDLE` is a pointer in `wdk-sys`; the same two-step
     // cast as `process_id` above, for the same reason.
     pending.parent_process_id = unsafe { (*create_info).ParentProcessId } as usize as u32;
-    pending.event.detail = 0;
+    pending.event.detail = calls & 0xFFFF;
     pending.event.subject = SubjectKind::Process;
     // The event says which of the two things happened, and `ExecutionBlocked`
     // is the action the protocol already defines for "a process creation or a
@@ -3450,6 +3451,9 @@ const MAX_PENDING_STATE_EVENTS: usize = 8;
 // still a bound: with the hundred-millisecond send it caps a stalled worker at
 // under a minute rather than for ever.
 const MAX_PENDING_PROCESS_EVENTS: usize = 512;
+
+/// How many times the process notification callback has run.
+static PROCESS_NOTIFY_CALLS: AtomicU32 = AtomicU32::new(0);
 
 /// How many rename and delete notifications may be waiting for a worker
 /// thread.
