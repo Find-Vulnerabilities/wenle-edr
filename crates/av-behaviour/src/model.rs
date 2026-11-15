@@ -267,6 +267,27 @@ mod tests {
         assert!(Model::load(&bytes).is_none());
     }
 
+    /// The cost of one score, so the product's CPU can be attributed.
+    #[test]
+    fn ten_thousand_scores_take_well_under_a_second() {
+        let model = Model::load(&tiny_model()).expect("the tiny model loads");
+        let events: Vec<Features> = (0..LENGTH)
+            .map(|index| {
+                let mut data = [0.0f32; WIDTH];
+                data[index % WIDTH] = 1.0;
+                Features(data)
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let mut total = 0.0f32;
+        for _ in 0..10_000 {
+            total += model.score(&events);
+        }
+        let elapsed = started.elapsed();
+        println!("10000 scores: {:?} ({:?} each), total {total}", elapsed, elapsed / 10_000);
+        assert!(elapsed < std::time::Duration::from_secs(2), "{elapsed:?}");
+    }
+
     #[test]
     fn a_story_is_padded_at_the_front_so_the_last_event_is_last() {
         let model = Model::load(&tiny_model()).expect("the model loads");

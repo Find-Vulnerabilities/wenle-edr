@@ -301,6 +301,13 @@ pub struct Host {
     behaviour_model: Option<av_behaviour::Model>,
     /// Each process's recent events, for the sequence model.
     behaviour_stories: std::collections::HashMap<u32, Vec<av_behaviour::Features>>,
+    /// When each process last produced an AI decision, so one story cannot
+    /// report on every event it grows.
+    behaviour_model_reported: std::collections::HashMap<u32, std::time::Instant>,
+    /// Events seen per process, for the scoring cadence. Counted separately
+    /// from the story length because a full story stops growing and its length
+    /// would score every event for ever.
+    behaviour_tick: std::collections::HashMap<u32, u32>,
     /// The two detectors that need the relation between two events: a written
     /// file that is then started, and a document that starts a script host.
     staging: av_behaviour::Staging,
@@ -555,6 +562,8 @@ impl Host {
             process_gap_warned: false,
             behaviour_model: behaviour_model_from_environment(),
             behaviour_stories: std::collections::HashMap::new(),
+            behaviour_model_reported: std::collections::HashMap::new(),
+            behaviour_tick: std::collections::HashMap::new(),
             staging: av_behaviour::Staging::new(),
             allow,
             vault,
@@ -1945,7 +1954,17 @@ impl Host {
                     if story.len() > av_behaviour::LENGTH {
                         story.remove(0);
                     }
-                    if story.len() % 8 == 0 {
+                    // A process is scored at its first, second, fourth and eighth
+                    // events and then every sixteenth: a virus that does four things
+                    // is scored three times. The counter is per process and separate
+                    // from the story length, because a full story stops growing and
+                    // its length would score every event for ever -- which is why
+                    // the first version of this still cost a whole core.
+                    let tick = self.behaviour_tick.entry(record.process_id).or_insert(0);
+                    *tick = tick.wrapping_add(1);
+                    let tick = *tick;
+                    let score_now = (tick <= 8 && tick.is_power_of_two()) || tick % 16 == 0;
+                    if score_now {
                         let score = model.score(story);
                         // The model decides at the one point where it has been
                         // measured safe: a score of 0.99 or more on twenty
@@ -1961,7 +1980,16 @@ impl Host {
                             .as_deref()
                             .map(|path| path.to_ascii_lowercase().contains("__psscriptpolicytest"))
                             .unwrap_or(false);
-                        if score >= 0.99 && !policy_test {
+                        let recently_reported = self
+                            .behaviour_model_reported
+                            .get(&record.process_id)
+                            .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(60));
+                        if score >= 0.99 && !policy_test && !recently_reported {
+                            if self.behaviour_model_reported.len() > 4096 {
+                                self.behaviour_model_reported.clear();
+                            }
+                            self.behaviour_model_reported
+                                .insert(record.process_id, std::time::Instant::now());
                             log::warn!(
                                 "behaviour: sequence model scored {:.3} for pid {} ({}), reported as malicious",
                                 score,
