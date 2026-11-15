@@ -264,12 +264,12 @@ def train(model, sequences, labels, epochs, class_weight):
     rng = np.random.default_rng(11)
     weights = [np.zeros_like(parameter) for parameter in model.params()]
     moments = [np.zeros_like(parameter) for parameter in model.params()]
-    learning_rate = 0.01
+    learning_rate = 0.02
     for epoch in range(epochs):
         rng.shuffle(order)
         total = 0.0
-        for start in range(0, len(order), 16):
-            batch_index = order[start:start + 16]
+        for start in range(0, len(order), 64):
+            batch_index = order[start:start + 64]
             batch = np.stack([sequences[index] for index in batch_index])
             target = np.array([[labels[index]] for index in batch_index], dtype=np.float32)
             probability, cache = model.forward(batch)
@@ -280,12 +280,20 @@ def train(model, sequences, labels, epochs, class_weight):
             total += float((loss * sample_weight).mean())
             grads = model.backward(batch, probability, target, cache, sample_weight)
             for index, gradient in enumerate(grads):
+                # Clipped, because an unclipped gradient on a saturated sigmoid
+                # pushed the logits until every score was 1.000 and the operating
+                # point became "above 0.9995" -- measured on 2026-11-14, a model
+                # with AUC 0.99 that could not be thresholded usefully.
+                gradient = np.clip(gradient, -1.0, 1.0).astype(np.float32)
                 weights[index] = 0.9 * weights[index] + 0.1 * gradient
                 moments[index] = 0.999 * moments[index] + 0.001 * gradient ** 2
                 parameters = model.params()
                 updated = parameters[index] - learning_rate * (weights[index] / (1 - 0.9 ** (epoch + 1))) / (
                     np.sqrt(moments[index] / (1 - 0.999 ** (epoch + 1))) + 1e-8
                 )
+                # Weight decay: the model has ten thousand parameters and five
+                # thousand sequences, so unpenalised weights memorise.
+                updated = updated - 0.0005 * parameters[index]
                 setattr_parameter(model, index, updated.astype(np.float32))
         if epoch % 50 == 0:
             print("epoch %3d  loss %.4f" % (epoch, total / max(1, len(order) // 16)), flush=True)

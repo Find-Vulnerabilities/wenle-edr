@@ -36,13 +36,17 @@ from train_behaviour import (  # noqa: E402
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--log", required=True)
+    parser.add_argument("--log-extra", default=None, help="an older log to read first")
     parser.add_argument("--labels", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--max-benign", type=int, default=3000)
     parser.add_argument("--seed", type=int, default=5)
     args = parser.parse_args()
 
-    events = load_events(args.log)
+    events = []
+    if args.log_extra:
+        events.extend(load_events(args.log_extra))
+    events.extend(load_events(args.log))
     windows = load_windows(args.labels)
     sequences = build_sequences(events, windows)
     print("events %d, windows %d, sequences %d" % (len(events), len(windows), len(sequences)))
