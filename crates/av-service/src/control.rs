@@ -224,7 +224,7 @@ pub fn serve_on(host: Host, stop: &AtomicBool, name: &str) -> Result<Host, Servi
                     // leaves continuously that produced four hundred lines a
                     // second and a control loop that spent its time recreating
                     // the pipe. Measured on the host on 2026-11-14.
-                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    std::thread::sleep(std::time::Duration::from_millis(250));
                 } else {
                     log::warn!("a client could not be connected ({failures} in a row): {error}");
                 }
