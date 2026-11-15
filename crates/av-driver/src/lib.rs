@@ -3872,17 +3872,27 @@ fn defer_write_event(process_id: u32, name: &[u16], units: usize) {
     pending.units = units as u32;
     pending.path[..units].copy_from_slice(&name[..units]);
 
-    // SAFETY: as documented on `queue_pending`; `block` was allocated with
-    // `FILE_EVENT_TAG` and `filter` was checked above. The routine is the file
-    // worker because that is the one whose block this is.
+    // Sent from the callback rather than queued: the filter manager's
+    // work-item queue was measured stopping after a handful of items on
+    // 2026-11-15, and write notifications are the stream the behaviour log
+    // is made of. The post-operation runs at PASSIVE_LEVEL, which is what
+    // `send_event` requires, and the send waits at most a hundred
+    // milliseconds.
     unsafe {
-        queue_pending(
-            block.cast::<c_void>(),
-            flt::FILE_EVENT_TAG,
-            file_event_worker,
-            &PENDING_WRITE_EVENTS,
-            filter,
+        send_event(
+            pending.event.sequence,
+            pending.event.now_100ns,
+            pending.event.subject,
+            pending.event.action,
+            pending.event.process_id,
+            0,
+            0,
+            &pending.path[..units],
+            &[],
+            0,
+            false,
         );
+        flt::ExFreePoolWithTag(block.cast::<c_void>(), flt::FILE_EVENT_TAG);
     }
 }
 
