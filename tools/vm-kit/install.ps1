@@ -8,7 +8,9 @@
 # failing at `fltmc load` with a number.
 
 param(
-    [string]$Root = $PSScriptRoot
+    # The stage root, not this script's folder: the certificate and the
+    # driver sit beside `tools`, and this file is two levels down.
+    [string]$Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 )
 
 $ErrorActionPreference = 'Stop'
