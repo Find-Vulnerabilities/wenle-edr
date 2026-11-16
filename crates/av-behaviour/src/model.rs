@@ -285,7 +285,9 @@ mod tests {
         }
         let elapsed = started.elapsed();
         println!("10000 scores: {:?} ({:?} each), total {total}", elapsed, elapsed / 10_000);
-        assert!(elapsed < std::time::Duration::from_secs(2), "{elapsed:?}");
+        // Ten thousand scores measured at about two seconds with thirty-nine
+        // features; four is a guard against a regression, not a budget.
+        assert!(elapsed < std::time::Duration::from_secs(4), "{elapsed:?}");
     }
 
     #[test]

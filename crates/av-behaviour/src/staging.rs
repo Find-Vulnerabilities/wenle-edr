@@ -261,6 +261,39 @@ impl Staging {
                         });
                     }
                 }
+                // Credential tooling and browser stores: the names are the
+                // behaviour. `procdump -ma lsass` is a dump; a browser profile's
+                // `Login Data` has no ordinary reason to sit in a command line.
+                if let Some(command_line) = record.command_line.as_deref() {
+                    let lower = command_line.to_ascii_lowercase();
+                    let credential = lower.contains("procdump")
+                        || lower.contains("mimikatz")
+                        || lower.contains("sekurlsa")
+                        || lower.contains("comsvcs")
+                        || lower.contains("ntdsutil");
+                    let browser_store = (lower.contains("login data") || lower.contains("cookies"))
+                        && lower.contains("user data");
+                    if credential || browser_store {
+                        hits.push(Hit {
+                            id: "behaviour/credential-tool",
+                            score: 120,
+                            path: record.path.clone().unwrap_or_default(),
+                            description: if credential {
+                                "A credential-dumping tool was run.".to_string()
+                            } else {
+                                "A browser credential store was named on a command line.".to_string()
+                            },
+                        });
+                    }
+                    if lower.contains("wevtutil") && lower.contains(" cl") {
+                        hits.push(Hit {
+                            id: "behaviour/event-log-clear",
+                            score: 110,
+                            path: record.path.clone().unwrap_or_default(),
+                            description: "The event log was cleared from a command line.".to_string(),
+                        });
+                    }
+                }
                 // Fileless: a script host told to hide, decode and fetch. Each
                 // of the three is ordinary alone -- a hidden window is a policy,
                 // an encoding is a deployment, a download is an update -- and
@@ -840,4 +873,31 @@ mod tests {
         });
         assert!(hits.is_empty());
     }
+    #[test]
+    fn a_credential_tool_on_a_command_line_is_a_hit() {
+        let mut staging = Staging::new();
+        let mut start = event(Action::ProcessStarted, 20, 1, "C:\\Windows\\System32\\cmd.exe", 10);
+        start.command_line = Some("procdump.exe -ma lsass.exe lsass.dmp".to_string());
+        let hits = staging.observe(&start, |_| Some(5));
+        assert!(hits.iter().any(|hit| hit.id == "behaviour/credential-tool"));
+    }
+
+    #[test]
+    fn a_browser_credential_store_is_a_hit() {
+        let mut staging = Staging::new();
+        let mut start = event(Action::ProcessStarted, 21, 1, "C:\\Windows\\System32\\cmd.exe", 10);
+        start.command_line = Some("copy \"C:\\Users\\a\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Login Data\" x".to_string());
+        let hits = staging.observe(&start, |_| Some(5));
+        assert!(hits.iter().any(|hit| hit.id == "behaviour/credential-tool"));
+    }
+
+    #[test]
+    fn clearing_the_event_log_is_a_hit() {
+        let mut staging = Staging::new();
+        let mut start = event(Action::ProcessStarted, 22, 1, "C:\\Windows\\System32\\wevtutil.exe", 10);
+        start.command_line = Some("wevtutil cl System".to_string());
+        let hits = staging.observe(&start, |_| Some(5));
+        assert!(hits.iter().any(|hit| hit.id == "behaviour/event-log-clear"));
+    }
+
 }

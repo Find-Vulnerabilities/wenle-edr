@@ -313,6 +313,9 @@ pub struct Host {
     /// are a technique. Measured 2026-11-17: the only benign story above 0.996
     /// in 2,190 was alone, and nine of ten held-out techniques produced two.
     behaviour_confirmed: Vec<std::time::Instant>,
+    /// When the system last reported a suspicious story, so an uncertain
+    /// model cannot fill a screen. Twenty an hour, oldest dropped.
+    behaviour_suspicious_at: Vec<std::time::Instant>,
     /// The two detectors that need the relation between two events: a written
     /// file that is then started, and a document that starts a script host.
     staging: av_behaviour::Staging,
@@ -570,6 +573,7 @@ impl Host {
             behaviour_model_reported: std::collections::HashMap::new(),
             behaviour_tick: std::collections::HashMap::new(),
             behaviour_confirmed: Vec::new(),
+            behaviour_suspicious_at: Vec::new(),
             staging: av_behaviour::Staging::new(),
             allow,
             vault,
@@ -2007,6 +2011,29 @@ impl Host {
                                 .retain(|at| now.duration_since(*at).as_secs() < 300);
                             self.behaviour_confirmed.push(now);
                             confirmed = self.behaviour_confirmed.len() >= 2;
+                        }
+                        // The uncertain tier: a story above 0.98 that did not
+                        // confirm is reported as suspicious, not malicious, at most
+                        // twenty times an hour. Measured 2026-11-17: at 0.98 this
+                        // machine produces a few hundred such stories an hour, so
+                        // the cap is what makes the tier usable at all.
+                        let mut suspicious = false;
+                        if score >= 0.98 && !policy_test && !confirmed {
+                            let now = std::time::Instant::now();
+                            self.behaviour_suspicious_at
+                                .retain(|at| now.duration_since(*at).as_secs() < 3600);
+                            if self.behaviour_suspicious_at.len() < 20 {
+                                self.behaviour_suspicious_at.push(now);
+                                suspicious = true;
+                            }
+                        }
+                        if suspicious {
+                            log::info!(
+                                "behaviour: sequence model suspicious {:.3} for pid {} ({}), reported",
+                                score,
+                                record.process_id,
+                                record.path.as_deref().unwrap_or("")
+                            );
                         }
                         if confirmed && !recently_reported {
                             if self.behaviour_model_reported.len() > 4096 {
