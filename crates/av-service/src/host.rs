@@ -308,6 +308,11 @@ pub struct Host {
     /// from the story length because a full story stops growing and its length
     /// would score every event for ever.
     behaviour_tick: std::collections::HashMap<u32, u32>,
+    /// Scores at or above the confirmation threshold, per process, with the
+    /// moment the first one arrived. One story above 0.996 is an accident; two
+    /// are a technique. Measured 2026-11-17: the only benign story above 0.996
+    /// in 2,190 was alone, and nine of ten held-out techniques produced two.
+    behaviour_confirmed: Vec<std::time::Instant>,
     /// The two detectors that need the relation between two events: a written
     /// file that is then started, and a document that starts a script host.
     staging: av_behaviour::Staging,
@@ -564,6 +569,7 @@ impl Host {
             behaviour_stories: std::collections::HashMap::new(),
             behaviour_model_reported: std::collections::HashMap::new(),
             behaviour_tick: std::collections::HashMap::new(),
+            behaviour_confirmed: Vec::new(),
             staging: av_behaviour::Staging::new(),
             allow,
             vault,
@@ -1984,7 +1990,25 @@ impl Host {
                             .behaviour_model_reported
                             .get(&record.process_id)
                             .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(60));
-                        if score >= 0.99 && !policy_test && !recently_reported {
+                        // Two stories above 0.996, not one: a held-out benign
+                        // story can reach 0.996, and did once in 2,190, but it
+                        // arrives alone. A technique produces a second story from
+                        // its child. The count is per process and expires after
+                        // five minutes.
+                        // Two stories above 0.99 on the machine within five
+                        // minutes, not two from one process: a technique
+                        // produces its second story in its child process, which
+                        // has a different pid. Measured 2026-11-17: the only
+                        // benign story above 0.996 in 2,190 arrived alone.
+                        let mut confirmed = false;
+                        if score >= 0.996 && !policy_test {
+                            let now = std::time::Instant::now();
+                            self.behaviour_confirmed
+                                .retain(|at| now.duration_since(*at).as_secs() < 300);
+                            self.behaviour_confirmed.push(now);
+                            confirmed = self.behaviour_confirmed.len() >= 2;
+                        }
+                        if confirmed && !recently_reported {
                             if self.behaviour_model_reported.len() > 4096 {
                                 self.behaviour_model_reported.clear();
                             }
