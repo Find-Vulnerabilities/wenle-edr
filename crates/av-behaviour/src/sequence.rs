@@ -166,7 +166,13 @@ fn command_line_classes(command_line: Option<&str>) -> [f32; 4] {
         || (lower.contains("sc ") && lower.contains(" create"))
         || (lower.contains("reg add") && lower.contains("\\run"))
         || lower.contains("__eventfilter")
-        || lower.contains("commandlineeventconsumer");
+        || lower.contains("commandlineeventconsumer")
+        // Remote execution: `wmic process call create` is the one technique
+        // the first four classes missed (measured 2026-11-16), and psexec and
+        // winrs are the same act by other names.
+        || (lower.contains("wmic") && lower.contains("process call create"))
+        || lower.contains("psexec")
+        || (lower.contains("winrs") && lower.contains("-r:"));
     let impact = (lower.contains("vssadmin") && lower.contains("delete shadows"))
         || (lower.contains("wbadmin") && lower.contains("delete catalog"))
         || lower.contains("recoveryenabled no")

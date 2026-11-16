@@ -177,5 +177,48 @@ Step 'T1489' 'service-stop-echo' {
     cmd /c "echo net stop WinDefend" | Out-Null
 }
 
+# --- second wave: more techniques, same rules (safe, read or echo) ----------
+
+Step 'T1098' 'account-manipulation' { cmd /c "net localgroup administrators" | Out-Null }
+Step 'T1136' 'create-account-echo' { cmd /c "echo net user wenle P@ssw0rd /add" | Out-Null }
+Step 'T1197' 'bits-job' { cmd /c "bitsadmin /list /allusers" | Out-Null }
+Step 'T1222' 'file-permissions' {
+    $file = Join-Path $env:TEMP 'wenle-acl.txt'
+    Set-Content -Path $file -Value 'x'
+    icacls $file /grant Everyone:R | Out-Null
+    icacls $file /remove Everyone | Out-Null
+    Remove-Item $file -Force
+}
+Step 'T1548.002' 'uac-bypass-echo' { cmd /c "echo fodhelper.exe" | Out-Null }
+Step 'T1569.002' 'service-execution-echo' { cmd /c "echo sc start WinDefend" | Out-Null }
+Step 'T1574.001' 'dll-search-order-echo' { cmd /c "echo copy payload.dll %TEMP%" | Out-Null }
+Step 'T1620' 'reflective-load-echo' { cmd /c "echo Assembly.Load(byte[])" | Out-Null }
+Step 'T1218.004' 'installutil' { cmd /c "installutil /?" | Out-Null }
+Step 'T1218.005' 'mshta-vbscript' { cmd /c "mshta vbscript:Close" | Out-Null }
+Step 'T1218.009' 'regasm' { cmd /c "regasm /?" | Out-Null }
+Step 'T1220' 'msxsl-echo' { cmd /c "echo msxsl.exe file.xml file.xsl" | Out-Null }
+Step 'T1505.003' 'web-shell-echo' { cmd /c "echo <% Response.Write(Request.Form("cmd")) %>" | Out-Null }
+Step 'T1564.001' 'hidden-file' {
+    $file = Join-Path $env:TEMP 'wenle-hidden.txt'
+    Set-Content -Path $file -Value 'x'
+    attrib +h $file | Out-Null
+    attrib -h $file | Out-Null
+    Remove-Item $file -Force
+}
+Step 'T1074.001' 'stage-collection' {
+    $dir = Join-Path $env:TEMP 'wenle-stage'
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    1..5 | ForEach-Object { Set-Content -Path (Join-Path $dir ("s{0}.txt" -f $_)) -Value 'x' }
+    Copy-Item (Join-Path $dir '*.txt') (Join-Path $env:TEMP 'wenle-stage-out') -Force -ErrorAction SilentlyContinue
+    Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $env:TEMP 'wenle-stage-out') -Recurse -Force -ErrorAction SilentlyContinue
+}
+Step 'T1056.001' 'keylogger-echo' { cmd /c "echo GetAsyncKeyState" | Out-Null }
+Step 'T1036' 'masquerade' {
+    $copy = Join-Path $env:TEMP 'svchost.exe'
+    Copy-Item 'C:\Windows\System32\cmd.exe' $copy -Force -ErrorAction SilentlyContinue
+    Remove-Item $copy -Force -ErrorAction SilentlyContinue
+}
+
 Remove-Item $sandbox -Recurse -Force -ErrorAction SilentlyContinue
 Write-Output ("labels written to {0}" -f $labels)
