@@ -29,7 +29,7 @@ import sys
 
 import numpy as np
 
-WIDTH = 35
+WIDTH = 39
 LENGTH = 64
 HIDDEN = 32
 AGGREGATES = 12

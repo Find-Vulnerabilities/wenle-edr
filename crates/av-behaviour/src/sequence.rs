@@ -33,7 +33,7 @@ use crate::dsl::Action;
 use crate::event::Record;
 
 /// How many floats describe one event.
-pub const WIDTH: usize = 35;
+pub const WIDTH: usize = 39;
 
 /// How many events make up one story.
 ///
@@ -146,6 +146,45 @@ fn registry_class(path: Option<&str>) -> usize {
 /// Four booleans rather than a bag of words: the model is looking for the shape
 /// `hidden + encoded + download`, and the words themselves are what the rules
 /// for named families already match.
+/// The command line as four technique classes: a downloader, a persistence
+/// command, a recovery-destroying command, and a credential tool.
+///
+/// These are the strings ATT&CK names, and they are what separates a technique
+/// from the same shell run by hand. A path feature cannot see them and a count
+/// cannot either.
+fn command_line_classes(command_line: Option<&str>) -> [f32; 4] {
+    let Some(command_line) = command_line else {
+        return [0.0; 4];
+    };
+    let lower = command_line.to_ascii_lowercase();
+    let downloader = (lower.contains("certutil") && lower.contains("-urlcache"))
+        || (lower.contains("bitsadmin") && lower.contains("/transfer"))
+        || (lower.contains("mshta") && lower.contains("http"))
+        || (lower.contains("regsvr32") && lower.contains("/i:http"))
+        || (lower.contains("rundll32") && lower.contains("javascript:"));
+    let persistence = (lower.contains("schtasks") && lower.contains("/create"))
+        || (lower.contains("sc ") && lower.contains(" create"))
+        || (lower.contains("reg add") && lower.contains("\\run"))
+        || lower.contains("__eventfilter")
+        || lower.contains("commandlineeventconsumer");
+    let impact = (lower.contains("vssadmin") && lower.contains("delete shadows"))
+        || (lower.contains("wbadmin") && lower.contains("delete catalog"))
+        || lower.contains("recoveryenabled no")
+        || (lower.contains("cipher") && lower.contains("/w"));
+    let credential = lower.contains("procdump")
+        || lower.contains("mimikatz")
+        || lower.contains("sekurlsa")
+        || lower.contains("lsass")
+        || lower.contains("comsvcs")
+        || lower.contains("ntdsutil");
+    [
+        f32::from(u8::from(downloader)),
+        f32::from(u8::from(persistence)),
+        f32::from(u8::from(impact)),
+        f32::from(u8::from(credential)),
+    ]
+}
+
 fn command_line_flags(command_line: Option<&str>) -> [f32; 4] {
     let Some(command_line) = command_line else {
         return [0.0; 4];
@@ -212,6 +251,11 @@ impl Features {
         data[24 + registry_class(record.path.as_deref())] = 1.0;
         let flags = command_line_flags(record.command_line.as_deref());
         data[28..32].copy_from_slice(&flags);
+        // Four more command-line classes, because the command line is where
+        // the technique lives: `certutil -urlcache` and `vssadmin delete
+        // shadows` are different behaviours before any path is considered.
+        let classes = command_line_classes(record.command_line.as_deref());
+        data[35..39].copy_from_slice(&classes);
         // Log-scaled: a gap of a microsecond and a gap of a second are both
         // "fast", and a linear value would let one slow event dominate the
         // vector.
