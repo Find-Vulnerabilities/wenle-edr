@@ -1914,6 +1914,18 @@ impl Host {
         // twice.
         let findings = match av_behaviour::Record::from_driver(event) {
             Some(mut record) => {
+                // BAM and SRUM are the system's bookkeeping of what ran when;
+                // every process start writes BAM, so a model that reads it learns
+                // "something ran" and reports ordinary work. Measured 2026-11-17:
+                // the technique decision and a benign false positive were both
+                // BAM registry stories. Ignored before the story is built.
+                if record.path.as_deref().is_some_and(|path| {
+                    let lower = path.to_ascii_lowercase();
+                    lower.contains("\\bam\\state\\") || lower.contains("\\srum\\")
+                }) {
+                    return;
+                }
+
                 // Written before the command line is attached, because a story is
                 // about the event the driver reported; the command line is this
                 // service's addition and the rules are what read it. The gap is
@@ -1973,9 +1985,22 @@ impl Host {
                     let tick = self.behaviour_tick.entry(record.process_id).or_insert(0);
                     *tick = tick.wrapping_add(1);
                     let tick = *tick;
-                    let score_now = (tick <= 8 && tick.is_power_of_two()) || tick % 16 == 0;
+                    // Every event for the first eight, then every eighth: the live test of
+                        // regsvr32 produced no score at all when only the first,
+                        // second, fourth and eighth were scored, because the
+                        // decisive event arrived at the third.
+                        let score_now = tick <= 8 || tick % 8 == 0;
                     if score_now {
                         let score = model.score(story);
+                        if score >= 0.90 {
+                            log::debug!(
+                                "behaviour: score {:.3} pid {} len {} ({})",
+                                score,
+                                record.process_id,
+                                story.len(),
+                                record.path.as_deref().unwrap_or("")
+                            );
+                        }
                         // The model decides at the one point where it has been
                         // measured safe: a score of 0.99 or more on twenty
                         // thousand stories from this machine produced no false
@@ -2005,7 +2030,7 @@ impl Host {
                         // has a different pid. Measured 2026-11-17: the only
                         // benign story above 0.996 in 2,190 arrived alone.
                         let mut confirmed = false;
-                        if score >= 0.996 && !policy_test {
+                        if score >= 0.995 && !policy_test {
                             let now = std::time::Instant::now();
                             self.behaviour_confirmed
                                 .retain(|at| now.duration_since(*at).as_secs() < 300);
