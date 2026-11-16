@@ -266,11 +266,22 @@ impl Staging {
                 // `Login Data` has no ordinary reason to sit in a command line.
                 if let Some(command_line) = record.command_line.as_deref() {
                     let lower = command_line.to_ascii_lowercase();
-                    let credential = lower.contains("procdump")
-                        || lower.contains("mimikatz")
-                        || lower.contains("sekurlsa")
-                        || lower.contains("comsvcs")
-                        || lower.contains("ntdsutil");
+                    // The tool's own image, not the strings in the command
+                    // line: a shell that merely mentions `procdump` -- a
+                    // terminal, an editor, this harness -- is not dumping a
+                    // credential. Measured 2026-11-17: the string version
+                    // fired on node.exe and powershell.exe.
+                    let image = record
+                        .path
+                        .as_deref()
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    let credential = image.ends_with("procdump.exe")
+                        || image.ends_with("procdump64.exe")
+                        || image.ends_with("mimikatz.exe")
+                        || image.ends_with("ntdsutil.exe")
+                        || (image.contains("rundll32") && lower.contains("comsvcs"))
+                        || (image.contains("rundll32") && lower.contains("sekurlsa"));
                     let browser_store = (lower.contains("login data") || lower.contains("cookies"))
                         && lower.contains("user data");
                     if credential || browser_store {
@@ -876,7 +887,7 @@ mod tests {
     #[test]
     fn a_credential_tool_on_a_command_line_is_a_hit() {
         let mut staging = Staging::new();
-        let mut start = event(Action::ProcessStarted, 20, 1, "C:\\Windows\\System32\\cmd.exe", 10);
+        let mut start = event(Action::ProcessStarted, 20, 1, "C:\\Tools\\procdump.exe", 10);
         start.command_line = Some("procdump.exe -ma lsass.exe lsass.dmp".to_string());
         let hits = staging.observe(&start, |_| Some(5));
         assert!(hits.iter().any(|hit| hit.id == "behaviour/credential-tool"));
