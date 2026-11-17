@@ -2216,7 +2216,7 @@ impl Host {
                             "behaviour: {} (pid {}, score {}): {} {} (model {:?}, detected {})",
                             hit.id,
                             record.process_id,
-                            hit.score + agreement,
+                            hit.score + agreement - signed_discount(std::path::Path::new(&hit.path)),
                             hit.path,
                             hit.description,
                             model_score,
@@ -2233,7 +2233,7 @@ impl Host {
                             file_name: file_name_of(&path),
                             path,
                             verdict: Verdict::Malicious,
-                            score: hit.score,
+                            score: hit.score.saturating_sub(signed_discount(std::path::Path::new(&hit.path))),
                             severity: av_core::Severity::High,
                             threat: None,
                             rules: {
@@ -3900,6 +3900,29 @@ pub fn detection_for_finding(finding: &av_realtime::Finding, action: DetectionAc
     }
 }
 
+/// A signed program outside the system directory: an installer rather than a
+/// signed Windows tool used by a technique. Signed system binaries are the
+/// whole point of living off the land, so they are never discounted.
+fn signed_discount(path: &std::path::Path) -> u16 {
+    let text = path.to_string_lossy().to_ascii_lowercase();
+    if text.starts_with("c:\\windows") || text.starts_with("\\\\?\\c:\\windows") {
+        return 0;
+    }
+    if !(text.ends_with(".exe") || text.ends_with(".msi") || text.ends_with(".dll")) {
+        return 0;
+    }
+    let Ok(bytes) = std::fs::read(path) else {
+        return 0;
+    };
+    let Ok(pe) = av_pe::PeFile::parse(&bytes) else {
+        return 0;
+    };
+    if matches!(av_authenticode::verify(&pe), av_authenticode::Verdict::Trusted(_)) {
+        40
+    } else {
+        0
+    }
+}
 /// The file name component of a path, or the whole path when there is not one.
 ///
 /// The same fallback `av-quarantine` and `av-ipc` use. A name that came out

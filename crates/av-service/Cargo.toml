@@ -13,6 +13,8 @@ name = "wenle-av-service"
 path = "src/main.rs"
 
 [dependencies]
+av-pe = { path = "../av-pe" }
+av-authenticode = { path = "../av-authenticode" }
 av-behaviour.workspace = true
 av-core.workspace = true
 av-driver-proto.workspace = true
