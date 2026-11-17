@@ -2120,7 +2120,7 @@ impl Host {
                             self.behaviour_model_reported
                                 .insert(record.process_id, std::time::Instant::now());
                             log::warn!(
-                                "behaviour: sequence model scored {:.3} for pid {} ({}), reported as malicious",
+                                "behaviour: sequence model scored {:.3} for pid {} ({}), reported as suspicious",
                                 score,
                                 record.process_id,
                                 record.path.as_deref().unwrap_or("")
@@ -2133,9 +2133,9 @@ impl Host {
                             out.push(Event::Detection(Detection {
                                 file_name: file_name_of(&path),
                                 path,
-                                verdict: Verdict::Malicious,
+                                verdict: Verdict::Suspicious,
                                 score: (score * 100.0).round() as u16,
-                                severity: av_core::Severity::High,
+                                severity: av_core::Severity::Medium,
                                 threat: None,
                                 rules: vec!["behaviour/sequence-model".to_string()],
                                 action: DetectionAction::Reported,
