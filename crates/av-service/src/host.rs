@@ -2030,7 +2030,7 @@ impl Host {
                         // has a different pid. Measured 2026-11-17: the only
                         // benign story above 0.996 in 2,190 arrived alone.
                         let mut confirmed = false;
-                        if score >= 0.995 && !policy_test {
+                        if score >= 0.996 && !policy_test {
                             let now = std::time::Instant::now();
                             self.behaviour_confirmed
                                 .retain(|at| now.duration_since(*at).as_secs() < 300);
