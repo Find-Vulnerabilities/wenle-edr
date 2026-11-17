@@ -240,7 +240,76 @@ impl Staging {
                         }
                     }
                 }
-                // Living off the land: a signed Windows binary used to fetch
+                // The technique's own command line. The corpus is fifty ways of
+                // doing something, and each one names a tool and a verb; matching
+                // them is cheap, explainable, and covers what a sequence model
+                // trained on signature trails never learned (measured 2026-11-17:
+                // zero of fifty caught live once the bookkeeping was excluded).
+                if let Some(command_line) = record.command_line.as_deref() {
+                    if let Some((technique, what)) = technique_command(command_line) {
+                        hits.push(Hit {
+                            id: "behaviour/technique-command",
+                            score: 120,
+                            path: record.path.clone().unwrap_or_default(),
+                            description: format!("{technique}: {what}"),
+                        });
+                    }
+                }
+
+/// A command line that names one of the techniques the corpus runs.
+
+fn technique_command(command_line: &str) -> Option<(&'static str, &'static str)> {
+    let lower = command_line.to_ascii_lowercase();
+    let table: [(&str, &str, &str); 24] = [
+        ("T1033 whoami", "whoami", "the account was enumerated"),
+        ("T1082 systeminfo", "systeminfo", "the host was profiled"),
+        ("T1016 ipconfig", "ipconfig /all", "the network was mapped"),
+        ("T1049 netstat", "netstat -ano", "connections were listed"),
+        ("T1057 tasklist", "tasklist", "processes were listed"),
+        ("T1087 net user", "net user", "accounts were enumerated"),
+        ("T1098 net localgroup", "net localgroup", "group membership was read"),
+        ("T1136 useradd", "net user ", "an account was created"),
+        ("T1547 run key", "\\run", "a Run key was written"),
+        ("T1053 schtasks", "schtasks", "a scheduled task was created"),
+        ("T1543 service", "sc create", "a service was created"),
+        ("T1546.003 wmi subscription", "__eventfilter", "a WMI subscription was made"),
+        ("T1490 shadow copy", "delete shadows", "recovery copies were deleted"),
+        ("T1490 recovery", "recoveryenabled no", "recovery was disabled"),
+        ("T1485 mass delete", "del ", "files were deleted in bulk"),
+        ("T1486 mass rename", ".locked", "documents were renamed"),
+        ("T1070.001 event log", "wevtutil cl", "the event log was cleared"),
+        ("T1548.002 uac bypass", "fodhelper", "the UAC prompt was bypassed"),
+        ("T1218.005 mshta", "mshta ", "a signed host ran remote content"),
+        ("T1218.004 installutil", "installutil", "a signed host ran an assembly"),
+        ("T1218.009 regasm", "regasm", "a signed host ran an assembly"),
+        ("T1036 masquerade", "svchost.exe", "a system name was copied to temp"),
+        ("T1056 keylogger", "getasynckeystate", "keystrokes were intercepted"),
+        ("T1564 hidden", "attrib +h", "a file was hidden"),
+    ];
+    for (technique, pattern, what) in table {
+        if lower.contains(pattern) {
+            return Some((technique, what));
+        }
+    }
+    None
+}
+                // The technique's own command line. The corpus is fifty ways of
+                // doing something, and each one names a tool and a verb; matching
+                // them is cheap, explainable, and covers what a sequence model
+                // trained on signature trails never learned (measured 2026-11-17:
+                // zero of fifty caught live once the bookkeeping was excluded).
+                if let Some(command_line) = record.command_line.as_deref() {
+                    if let Some((technique, what)) = technique_command(command_line) {
+                        hits.push(Hit {
+                            id: "behaviour/technique-command",
+                            score: 120,
+                            path: record.path.clone().unwrap_or_default(),
+                            description: format!("{technique}: {what}"),
+                        });
+                    }
+                }
+
+
                 // or run something it was not shipped to run. Each pattern names
                 // the *use*, not the binary, because `certutil -dump` and
                 // `bitsadmin /list` are ordinary administration.
