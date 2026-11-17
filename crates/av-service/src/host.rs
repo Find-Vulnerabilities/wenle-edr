@@ -479,6 +479,25 @@ pub struct Host {
     tamper_state: TamperState,
 }
 
+/// Trim the working set every ten minutes, so memory that was touched once
+/// does not stay resident for the life of the service. Protection is unchanged:
+/// the pages are still there and fault back in when a scan needs them.
+fn trim_working_set_in_background() {
+    std::thread::spawn(|| loop {
+        std::thread::sleep(std::time::Duration::from_secs(600));
+        #[cfg(windows)]
+        unsafe {
+            use windows::Win32::System::Threading::GetCurrentProcess;
+            let _ = windows::Win32::System::Memory::SetProcessWorkingSetSizeEx(
+                GetCurrentProcess(),
+                usize::MAX,
+                usize::MAX,
+                windows::Win32::System::Memory::SETPROCESSWORKINGSETSIZEEX_FLAGS(0),
+            );
+        }
+    });
+}
+
 impl Host {
     /// Open the vault, load the rules, and stop there.
     ///
@@ -499,6 +518,7 @@ impl Host {
     /// a service that cannot take a malicious file has to say so at startup
     /// rather than at the moment it matters.
     pub fn open(paths: AvPaths, loaded: LoadedConfig) -> Result<Self, ServiceError> {
+        trim_working_set_in_background();
         // First, before the rule database is read and before anything is opened
         // in the product's own directories: this is the step that closes the
         // process's DACL, and every later step is one an attacker would rather
