@@ -479,6 +479,33 @@ pub struct Host {
     tamper_state: TamperState,
 }
 
+/// Trim to two hundred megabytes, once an hour, and never below it.
+///
+/// An unbounded trim emptied the working set to thirty-three megabytes and the
+/// next technique round caught three of fifty: the code pages had been evicted,
+/// and every event faulted them back in while short-lived children came and
+/// went. A floor keeps the hot pages and spends the trim on cold ones.
+fn trim_working_set_in_background() {
+    std::thread::spawn(|| {
+        let mut first = true;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(if first { 300 } else { 3600 }));
+            first = false;
+            #[cfg(windows)]
+            unsafe {
+                use windows::Win32::System::Threading::GetCurrentProcess;
+                let floor = 200usize * 1024 * 1024;
+                let _ = windows::Win32::System::Memory::SetProcessWorkingSetSizeEx(
+                    GetCurrentProcess(),
+                    floor,
+                    floor,
+                    windows::Win32::System::Memory::SETPROCESSWORKINGSETSIZEEX_FLAGS(0),
+                );
+            }
+        }
+    });
+}
+
 impl Host {
     /// Open the vault, load the rules, and stop there.
     ///
@@ -499,6 +526,7 @@ impl Host {
     /// a service that cannot take a malicious file has to say so at startup
     /// rather than at the moment it matters.
     pub fn open(paths: AvPaths, loaded: LoadedConfig) -> Result<Self, ServiceError> {
+        trim_working_set_in_background();
         // First, before the rule database is read and before anything is opened
         // in the product's own directories: this is the step that closes the
         // process's DACL, and every later step is one an attacker would rather
