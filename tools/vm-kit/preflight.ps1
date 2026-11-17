@@ -49,7 +49,17 @@ if ($after -le $before) {
 
 Write-Output ("service running, filter loaded, log growing at {0:N1} KB/s" -f ($rate / 1KB))
 if ($events -gt 0) {
-    Write-Output ("last event at {0}" -f [DateTimeOffset]::FromUnixTimeMilliseconds([long]($events * 1000)).LocalDateTime)
+    # The event's own clock, not the file's. A service that was just restarted
+    # receives the driver's backlog first, and those events carry timestamps
+    # minutes old: measured 2026-11-17, eleven minutes behind the collection,
+    # which made every label window match nothing. A log whose newest event is
+    # old is a log that has not caught up yet, however fast it grows.
+    $written = [DateTimeOffset]::FromUnixTimeMilliseconds([long]($events * 1000)).LocalDateTime
+    $lag = (Get-Date) - $written
+    Write-Output ("last event at {0} (lag {1:N1} s)" -f $written, $lag.TotalSeconds)
+    if ($lag.TotalSeconds -gt 5) {
+        Fail ("the newest event is {0:N0} s old; the driver is still delivering a backlog, wait and run this again" -f $lag.TotalSeconds)
+    }
 }
 Write-Output 'collection may start'
 exit 0
