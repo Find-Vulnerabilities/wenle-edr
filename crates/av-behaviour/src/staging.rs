@@ -260,7 +260,7 @@ impl Staging {
 
 fn technique_command(command_line: &str) -> Option<(&'static str, &'static str)> {
     let lower = command_line.to_ascii_lowercase();
-    let table: [(&str, &str, &str); 24] = [
+    let table: [(&str, &str, &str); 54] = [
         ("T1033 whoami", "whoami", "the account was enumerated"),
         ("T1082 systeminfo", "systeminfo", "the host was profiled"),
         ("T1016 ipconfig", "ipconfig /all", "the network was mapped"),
@@ -285,6 +285,36 @@ fn technique_command(command_line: &str) -> Option<(&'static str, &'static str)>
         ("T1036 masquerade", "svchost.exe", "a system name was copied to temp"),
         ("T1056 keylogger", "getasynckeystate", "keystrokes were intercepted"),
         ("T1564 hidden", "attrib +h", "a file was hidden"),
+        ("T1105 certutil", "certutil -urlcache", "a signed binary fetched remote content"),
+        ("T1105 bitsadmin", "bitsadmin /transfer", "a background transfer was created"),
+        ("T1105 certutil-decode", "certutil -decode", "a file was decoded from base64"),
+        ("T1218.010 regsvr32", "regsvr32 /i:http", "a signed host fetched a scriptlet"),
+        ("T1218.011 rundll32", "rundll32", "a signed host ran a script"),
+        ("T1047 wmic", "process call create", "WMIC started a process"),
+        ("T1003.001 procdump", "procdump", "a process memory dump was requested"),
+        ("T1003.001 comsvcs", "comsvcs", "a dump was taken through comsvcs"),
+        ("T1558 rubeus", "rubeus", "a ticket attack was named"),
+        ("T1490 vssadmin", "vssadmin", "shadow copies were listed or deleted"),
+        ("T1490 wbadmin", "wbadmin", "backup catalogues were touched"),
+        ("T1490 bcdedit", "bcdedit", "boot recovery was changed"),
+        ("T1486 cipher", "cipher /w", "free space was overwritten"),
+        ("T1222 icacls", "icacls", "file permissions were changed"),
+        ("T1564 hidden", "attrib +h", "a file was hidden"),
+        ("T1218.005 mshta-vb", "mshta vbscript", "a signed host ran vbscript"),
+        ("T1220 msxsl", "msxsl", "an xslt was executed"),
+        ("T1059 cscript", "cscript", "a script host ran a file"),
+        ("T1059 wscript", "wscript", "a script host ran a file"),
+        ("T1569 psexec", "psexec", "a remote executor was run"),
+        ("T1021 winrs", "winrs", "a remote shell was started"),
+        ("T1055 reflective", "assembly.load", "an assembly was loaded in memory"),
+        ("T1562.001 defender", "set-mppreference", "defender settings were changed"),
+        ("T1562.004 firewall", "advfirewall", "the firewall was reconfigured"),
+        ("T1003.001 lsass", "lsass", "a credential store was named"),
+        ("T1558.003 kerberoast", "kerberoast", "a ticket attack was named"),
+        ("T1555.003 browser", "login data", "a browser credential store was named"),
+        ("T1552.001 credential-files", "*.txt", "files were searched for secrets"),
+        ("T1083 discovery", "get-childitem", "the file system was walked"),
+        ("T1548.002 uac", "fodhelper.exe", "the UAC prompt was bypassed"),
     ];
     for (technique, pattern, what) in table {
         if lower.contains(pattern) {
