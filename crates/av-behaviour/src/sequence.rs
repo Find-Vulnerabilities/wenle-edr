@@ -33,7 +33,7 @@ use crate::dsl::Action;
 use crate::event::Record;
 
 /// How many floats describe one event.
-pub const WIDTH: usize = 39;
+pub const WIDTH: usize = 47;
 
 /// How many events make up one story.
 ///
@@ -260,6 +260,36 @@ impl Features {
         // Four more command-line classes, because the command line is where
         // the technique lives: `certutil -urlcache` and `vssadmin delete
         // shadows` are different behaviours before any path is considered.
+        // Which tool the command line runs, as a one-hot of a hash: a
+        // technique is named by its tool, and four coarse classes could not tell
+        // certutil from schtasks. Eight buckets is a compromise between the model
+        // learning "same tool" and the vector staying small.
+        let tool = command_line_tool(record.command_line.as_deref());
+        data[39 + tool] = 1.0;
+/// The first token of a command line, lowercased and reduced to its file name,
+/// hashed into eight buckets.
+fn command_line_tool(command_line: Option<&str>) -> usize {
+    let Some(command_line) = command_line else {
+        return 0;
+    };
+    let token = command_line
+        .trim()
+        .trim_matches(|c| c == '"')
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mut hash: u32 = 2166136261;
+    for byte in token.bytes() {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(16777619);
+    }
+    (hash % 8) as usize
+}
+
         let classes = command_line_classes(record.command_line.as_deref());
         data[35..39].copy_from_slice(&classes);
         // Log-scaled: a gap of a microsecond and a gap of a second are both
