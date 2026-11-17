@@ -301,6 +301,9 @@ pub struct Host {
     behaviour_model: Option<av_behaviour::Model>,
     /// Each process's recent events, for the sequence model.
     behaviour_stories: std::collections::HashMap<u32, Vec<av_behaviour::Features>>,
+    /// When each process last delivered an event, so a story is split at an
+    /// idle gap the way the training corpus is.
+    behaviour_story_gap: std::collections::HashMap<u32, u64>,
     /// When each process last produced an AI decision, so one story cannot
     /// report on every event it grows.
     behaviour_model_reported: std::collections::HashMap<u32, std::time::Instant>,
@@ -570,6 +573,7 @@ impl Host {
             process_gap_warned: false,
             behaviour_model: behaviour_model_from_environment(),
             behaviour_stories: std::collections::HashMap::new(),
+            behaviour_story_gap: std::collections::HashMap::new(),
             behaviour_model_reported: std::collections::HashMap::new(),
             behaviour_tick: std::collections::HashMap::new(),
             behaviour_confirmed: Vec::new(),
@@ -1921,7 +1925,26 @@ impl Host {
                 // BAM registry stories. Ignored before the story is built.
                 if record.path.as_deref().is_some_and(|path| {
                     let lower = path.to_ascii_lowercase();
-                    lower.contains("\\bam\\state\\") || lower.contains("\\srum\\")
+                    lower.contains("\\bam\\state\\")
+                        || lower.contains("\\srum\\")
+                        // Certificate stores are written whenever a binary is
+                        // verified, which is every signed tool a technique runs:
+                        // measured 2026-11-17, every technique decision was a
+                        // certificate registry path, not the technique.
+                        || lower.contains("\\systemcertificates\\")
+                        || lower.contains("\\certificates\\")
+                        // The driver reports key paths as leaf names in these
+                        // cases, so the check is on the leaf.
+                        || lower.ends_with("crls")
+                        || lower.ends_with("ctls")
+                        || lower.ends_with("certificates")
+                        || lower.ends_with("disallowed")
+                        || lower.ends_with("\\ca")
+                        // Every signed binary a technique runs writes a certificate
+                        // store; the model learned the store, not the technique.
+                        || lower.contains("certificate")
+                        || lower.contains("wintrust")
+                        || lower.contains("software publishing")
                 }) {
                     return;
                 }
@@ -1968,10 +1991,22 @@ impl Host {
                         // story's history.
                         self.behaviour_stories.clear();
                     }
+                    let split = match self
+                        .behaviour_story_gap
+                        .insert(record.process_id, record.timestamp)
+                    {
+                        Some(previous) => {
+                            record.timestamp.saturating_sub(previous) > 120_000_000
+                        }
+                        None => false,
+                    };
                     let story = self
                         .behaviour_stories
                         .entry(record.process_id)
                         .or_default();
+                    if split {
+                        story.clear();
+                    }
                     story.push(features);
                     if story.len() > av_behaviour::LENGTH {
                         story.remove(0);
@@ -1989,7 +2024,25 @@ impl Host {
                         // regsvr32 produced no score at all when only the first,
                         // second, fourth and eighth were scored, because the
                         // decisive event arrived at the third.
-                        let score_now = tick <= 8 || tick % 8 == 0;
+                        // A story shorter than four events was never in the training corpus,
+                        // and scoring one asks the model about a shape it has never
+                        // seen: measured 2026-11-17, the live service produced 193
+                        // benign decisions where the corpus produced none.
+                        // Four events is the corpus shape; a script host is allowed two,
+                        // because a technique that runs through PowerShell is often two
+                        // events long (a write and a start), and refusing to score it
+                        // misses it entirely (measured 2026-11-17: minimum four gave
+                        // zero technique decisions).
+                        let script_host = record.path.as_deref().is_some_and(|path| {
+                            let lower = path.to_ascii_lowercase();
+                            lower.contains("powershell")
+                                || lower.ends_with("cmd.exe")
+                                || lower.contains("wscript")
+                                || lower.contains("cscript")
+                                || lower.contains("mshta")
+                        });
+                        let minimum = if script_host { 2 } else { 4 };
+                        let score_now = story.len() >= minimum && (tick <= 8 || tick % 8 == 0);
                     if score_now {
                         let score = model.score(story);
                         if score >= 0.90 {
