@@ -60,7 +60,8 @@ default-members = [
 ]
 
 [workspace.package]
-version = "1.0.3"
+version = "1.0.4"
+description = "Wenle EDR - an endpoint agent with AI behaviour scoring"
 edition = "2021"
 rust-version = "1.82"
 license = "MIT"

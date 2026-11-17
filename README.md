@@ -1,10 +1,14 @@
 # Wenle EDR
 
+An EDR with AI: a behaviour model scores every process story, the rules
+argue from evidence, and the agent decides in the open.
+
 An endpoint agent for Windows, written in Rust. A kernel minifilter sees file
 operations before they happen, the service decides about them, and a behaviour
 engine watches what processes do and can stop one while it is running.
 
-There is no cloud, no telemetry, no machine learning and no feed. Everything it
+There is no cloud, no telemetry and no feed. The behaviour model is
+compiled into the binary and its weights ship with the service. Everything it
 knows is compiled into the binary, and every verdict names the evidence behind
 it.
 
@@ -66,7 +70,7 @@ and a process that allocated less look identical in Task Manager.
 | | |
 |---|---|
 | idle working set, after Windows trims it | 80â€“150 MB |
-| private bytes while idle | 330–420 MB |
+| private bytes while idle | 330ï¿½420 MB |
 | CPU, ordinary use | 1â€“5 % of one core |
 | CPU, scanning bursts | up to two cores |
 | the first minutes after boot | up to 1.3 GB working set while the scan queue drains, trimmed back by Windows |
@@ -136,6 +140,6 @@ No rules are distributed with it, so none is covered by that grant. `wenle build
 compiles rule sources you supply. `tools/fetch-rules.ps1` downloads
 [YARA-Forge](https://github.com/YARAHQ/yara-forge) on your machine; its
 packaging tool is GPL-3.0 and the rules it collects come from forty-odd upstream
-repositories, each keeping its own licence — not uniform, and some state none.
+repositories, each keeping its own licence ï¿½ not uniform, and some state none.
 That script is a convenience for the person running it, not a redistribution by
 this project: whatever you compile from it is yours to keep and not to hand on.
