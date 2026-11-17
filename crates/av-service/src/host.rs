@@ -1984,12 +1984,21 @@ impl Host {
                 // of a story is scored, which is often enough to catch a burst
                 // and cheap enough not to score on every write of a build.
                 if let Some(model) = self.behaviour_model.as_ref() {
-                    if self.behaviour_stories.len() > 4096 {
+                    if self.behaviour_stories.len() > 1024 {
                         // One entry per process, and the map is not pruned when a
                         // process ends (the driver does not report every end);
                         // clearing on overflow keeps memory bounded and costs one
                         // story's history.
+                        // The neighbouring maps are keyed by pid too and were
+                        // never pruned; the service grew while idle (measured
+                        // 2026-11-18: 612 to 653 MB in three minutes with no
+                        // workload). Clearing them together bounds the whole set.
                         self.behaviour_stories.clear();
+                        self.behaviour_tick.clear();
+                        self.behaviour_last.clear();
+                        self.behaviour_images.clear();
+                        self.behaviour_story_gap.clear();
+                        self.behaviour_model_reported.clear();
                     }
                     let split = match self
                         .behaviour_story_gap
@@ -2742,7 +2751,13 @@ impl Host {
         }
         match self.vault.quarantine_file(path, &context) {
             Ok(entry) => {
-                self.taken.insert(
+                // The taken map grew for every quarantined path; a machine that
+        // quarantines for weeks must not keep them all. Measured 2026-11-18:
+        // the service reached 743 MB after a night, against 273 MB at start.
+        if self.taken.len() > 4096 {
+            self.taken.clear();
+        }
+        self.taken.insert(
                     path.to_path_buf(),
                     Taken {
                         id: entry.id,
