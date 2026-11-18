@@ -66,8 +66,8 @@ const FEATURES: &[Feature] = &[
     Feature {
         id: "script/amsi-bypass",
         description: "The script names the AMSI scan function together with a way to patch memory.",
-        weight: 70,
-        needles: &["amsi.dll", "amsiscanbuffer"],
+        weight: 200,
+        needles: &["amsi.dll", "amsiscanbuffer", "amsiutils", "amsiinitfailed"],
     },
     Feature {
         id: "script/injection-apis",
@@ -118,6 +118,8 @@ const FEATURES: &[Feature] = &[
             "downloadfile",
             "downloaddata",
             "net.webclient",
+            "iwr",
+            "invoke-webrequest",
             "invoke-webrequest",
             "start-bitstransfer",
         ],
@@ -176,7 +178,7 @@ const FEATURES: &[Feature] = &[
         id: "script/start-from-appdata",
         description: "The script starts a program from the user profile's application data.",
         weight: 40,
-        needles: &["start\"\"%appdata%", "%appdata%\\"],
+        needles: &["start\"\"%appdata%", "start%appdata%", "start%temp%", "%appdata%\\"],
     },
     Feature {
         id: "script/encoded-blob",
@@ -221,6 +223,29 @@ const FEATURES: &[Feature] = &[
         description: "The script extracts an archive it carries or fetches.",
         weight: 35,
         needles: &["tar-x", "tar-xf", "expand-archive", "7z", "unzip", "extrac32", "cabextract"],
+    },
+    Feature {
+        id: "script/charcode-array",
+        description: "The script is a long array of character codes.",
+        weight: 45,
+        needles: &[],
+    },
+    Feature {
+        id: "script/wmi-subscription",
+        description: "The script builds a WMI event subscription.",
+        weight: 60,
+        needles: &[
+            "__eventfilter",
+            "activescripteventconsumer",
+            "commandlineeventconsumer",
+            "__instancemodificationevent",
+        ],
+    },
+    Feature {
+        id: "script/bitsadmin",
+        description: "The script fetches a file with the BITS transfer utility.",
+        weight: 40,
+        needles: &["bitsadmin"],
     },
 ];
 
@@ -301,6 +326,48 @@ const INTERACTIONS: &[(&[&str], u16, &str, &str)] = &[
         140,
         "script/extract-execute",
         "An archive is extracted and a program is started from it.",
+    ),
+    (
+        &["script/charcode-array", "script/execute-sink"],
+        140,
+        "script/charcode-execute",
+        "Character codes are assembled and executed, which is obfuscation with a purpose.",
+    ),
+    (
+        &["script/wmi-subscription", "script/execute-sink"],
+        100,
+        "script/wmi-persistence",
+        "A WMI subscription runs a command, which is fileless persistence.",
+    ),
+    (
+        &["script/bitsadmin", "script/execute-sink"],
+        100,
+        "script/bits-download-execute",
+        "A file is fetched with BITS and started.",
+    ),
+    (
+        &["script/amsi-bypass", "script/execute-sink"],
+        100,
+        "script/amsi-bypass-run",
+        "The script disables AMSI and then runs code, which is a stager.",
+    ),
+    (
+        &["script/persistence", "script/execute-sink"],
+        140,
+        "script/persist-and-run",
+        "The script arranges to run again and runs something now, which is how a foothold is installed.",
+    ),
+    (
+        &["script/defence-tamper", "script/execute-sink"],
+        100,
+        "script/tamper-and-run",
+        "The script weakens the machine's defences and then runs something.",
+    ),
+    (
+        &["script/persistence", "script/start-from-appdata"],
+        140,
+        "script/persist-from-profile",
+        "The script arranges to run again and starts a program from the user profile, which is a foothold.",
     ),
 ];
 
@@ -398,6 +465,22 @@ fn longest_encoded_run(text: &[u8]) -> usize {
     best
 }
 
+/// The longest run of digits and commas, which is what a character-code array
+/// looks like after flattening.
+fn longest_number_run(text: &[u8]) -> usize {
+    let mut best = 0;
+    let mut run = 0;
+    for &byte in text {
+        if byte.is_ascii_digit() || byte == b',' {
+            run += 1;
+            best = best.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    best
+}
+
 pub fn assess(kind: FileKind, data: &[u8]) -> Vec<Detection> {
     // `Script` is what the on-disk path decides. `Other` is what a caller with
     // no path has -- the AMSI provider hands the service the text of a script
@@ -417,10 +500,20 @@ pub fn assess(kind: FileKind, data: &[u8]) -> Vec<Detection> {
             // These two need a second condition, because the name alone is not
             // evidence: the AMSI function is named by every EDR document, and
             // the injection calls are named by debuggers and profilers.
+            "script/charcode-array" => longest_number_run(&flat) >= 400,
             "script/encoded-blob" => longest_encoded_run(&flat) >= 2048,
             "script/amsi-bypass" => {
-                any_of(&flat, &["amsi.dll", "amsiscanbuffer"])
-                    && any_of(&flat, &["patch", "virtualprotect", "writeprocessmemory"])
+                any_of(&flat, &["amsi.dll", "amsiscanbuffer", "amsiutils", "amsiinitfailed"])
+                    && any_of(
+                        &flat,
+                        &[
+                            "patch",
+                            "virtualprotect",
+                            "writeprocessmemory",
+                            "setvalue",
+                            "getfield",
+                        ],
+                    )
             }
             "script/injection-apis" => count_of(
                 &flat,
@@ -436,7 +529,7 @@ pub fn assess(kind: FileKind, data: &[u8]) -> Vec<Detection> {
             // convicted for it -- one false positive in 702 of Microsoft's own
             // scripts, and a manifest is not something that runs.
             "script/execute-sink" => {
-                any_of(&flat, &["iex(", "|iex"])
+                any_of(&flat, &["iex(", "|iex", "iex"])
                     || (contains(&flat, b"invoke-expression") && contains(&flat, b"$"))
                     || any_of(
                         &flat,
@@ -447,6 +540,10 @@ pub fn assess(kind: FileKind, data: &[u8]) -> Vec<Detection> {
                             "invoke-item",
                             "start\"\"",
                             "run\"",
+                            "subprocess.popen",
+                            "os.system",
+                            "child_process",
+                            "exec(", 
                         ],
                     )
             }
