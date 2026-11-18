@@ -176,7 +176,7 @@ const FEATURES: &[Feature] = &[
         id: "script/start-from-appdata",
         description: "The script starts a program from the user profile's application data.",
         weight: 40,
-        needles: &["start \"\" %appdata%", "%appdata%\\"],
+        needles: &["start\"\"%appdata%", "%appdata%\\"],
     },
     Feature {
         id: "script/encoded-blob",
@@ -209,6 +209,18 @@ const FEATURES: &[Feature] = &[
             "xlv",
             "decompress",
         ],
+    },
+    Feature {
+        id: "script/certutil-decode",
+        description: "The script decodes a file with certutil.",
+        weight: 35,
+        needles: &["certutil-decode", "certutil-urlcache"],
+    },
+    Feature {
+        id: "script/archive-extract",
+        description: "The script extracts an archive it carries or fetches.",
+        weight: 35,
+        needles: &["tar-x", "tar-xf", "expand-archive", "7z", "unzip", "extrac32", "cabextract"],
     },
 ];
 
@@ -272,6 +284,24 @@ const INTERACTIONS: &[(&[&str], u16, &str, &str)] = &[
         "script/encoded-payload-run",
         "Encoded data is decoded and executed, which is a dropper in a script.",
     ),
+    (
+        &["script/encoded-blob", "script/execute-sink"],
+        140,
+        "script/encoded-execute",
+        "Encoded data is written out and executed, whatever the encoding or the language.",
+    ),
+    (
+        &["script/certutil-decode", "script/execute-sink"],
+        140,
+        "script/decode-execute",
+        "A file is decoded with certutil and something is started from the result.",
+    ),
+    (
+        &["script/archive-extract", "script/execute-sink"],
+        140,
+        "script/extract-execute",
+        "An archive is extracted and a program is started from it.",
+    ),
 ];
 
 /// Whether a buffer is text a person could have written.
@@ -309,6 +339,9 @@ fn flatten(data: &[u8]) -> Vec<u8> {
 }
 
 /// Whether the flattened text contains any of the needles.
+///
+/// Flattening removes whitespace, so a needle with a space in it can never
+/// match: `tar -xf` has to be written `tar-xf`, and `start ""` as `start""`.
 fn any_of(flat: &[u8], needles: &[&str]) -> bool {
     needles
         .iter()
@@ -405,6 +438,17 @@ pub fn assess(kind: FileKind, data: &[u8]) -> Vec<Detection> {
             "script/execute-sink" => {
                 any_of(&flat, &["iex(", "|iex"])
                     || (contains(&flat, b"invoke-expression") && contains(&flat, b"$"))
+                    || any_of(
+                        &flat,
+                        &[
+                            "start-process",
+                            "wscript.shell",
+                            "shell.application",
+                            "invoke-item",
+                            "start\"\"",
+                            "run\"",
+                        ],
+                    )
             }
             "script/obfuscation" => {
                 count_of(&flat, &["[char]", "-join", "join("]) >= 3
