@@ -178,6 +178,38 @@ const FEATURES: &[Feature] = &[
         weight: 40,
         needles: &["start \"\" %appdata%", "%appdata%\\"],
     },
+    Feature {
+        id: "script/encoded-blob",
+        description: "The script carries a long run of encoded data.",
+        weight: 45,
+        needles: &[],
+    },
+    Feature {
+        id: "script/decoder",
+        description: "The script turns encoded data back into a file with a decoder.",
+        weight: 40,
+        needles: &[
+            "adodb.stream",
+            "frombase64string",
+            "convert]::frombase64",
+            "certutil",
+            "expand-archive",
+            "msxml2.domdocument",
+            "7z",
+            "7za",
+            "unzip",
+            "expand ",
+            "extrac32",
+            "makecab",
+            "esentutl",
+            "msiexec /a",
+            "tar -x",
+            "gunzip",
+            "cabextract",
+            "xlv",
+            "decompress",
+        ],
+    },
 ];
 
 /// A combination that is worth more than its parts.
@@ -227,6 +259,18 @@ const INTERACTIONS: &[(&[&str], u16, &str, &str)] = &[
         100,
         "script/base64-dropper",
         "A base64 archive is decoded by a generated script and the result is started from application data, which is a dropper in a batch file.",
+    ),
+    (
+        &["script/encoded-blob", "script/decoder"],
+        120,
+        "script/decoded-payload",
+        "Encoded data is decoded into a file by the script, whatever the encoding or archive format.",
+    ),
+    (
+        &["script/encoded-blob", "script/decoder", "script/execute-sink"],
+        100,
+        "script/encoded-payload-run",
+        "Encoded data is decoded and executed, which is a dropper in a script.",
     ),
 ];
 
@@ -298,6 +342,29 @@ fn count_of(flat: &[u8], needles: &[&str]) -> usize {
 /// `kind` is checked rather than trusted: a PE that happens to contain the text
 /// `downloadstring` is not a script, and running these heuristics over one would
 /// be reporting a string in a binary as if it were code.
+/// The longest run of characters that could be base64 or hex. A payload hidden
+/// in a script is a long run of them, whatever the compression behind it.
+fn longest_encoded_run(text: &[u8]) -> usize {
+    let mut best = 0;
+    let mut run = 0;
+    for &byte in text {
+        let encoded = byte.is_ascii_alphanumeric()
+            || byte == b'+'
+            || byte == b'/'
+            || byte == b'='
+            || byte == b'\\'
+            || byte == b'-'
+            || byte == b'_';
+        if encoded {
+            run += 1;
+            best = best.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    best
+}
+
 pub fn assess(kind: FileKind, data: &[u8]) -> Vec<Detection> {
     // `Script` is what the on-disk path decides. `Other` is what a caller with
     // no path has -- the AMSI provider hands the service the text of a script
@@ -317,6 +384,7 @@ pub fn assess(kind: FileKind, data: &[u8]) -> Vec<Detection> {
             // These two need a second condition, because the name alone is not
             // evidence: the AMSI function is named by every EDR document, and
             // the injection calls are named by debuggers and profilers.
+            "script/encoded-blob" => longest_encoded_run(&flat) >= 2048,
             "script/amsi-bypass" => {
                 any_of(&flat, &["amsi.dll", "amsiscanbuffer"])
                     && any_of(&flat, &["patch", "virtualprotect", "writeprocessmemory"])
