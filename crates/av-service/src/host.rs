@@ -2249,11 +2249,33 @@ impl Host {
                             Some(score) if score >= 0.90 => 10,
                             _ => 0,
                         };
+                        let scored = hit
+                            .score
+                            .saturating_add(agreement)
+                            .saturating_sub(signed_discount(std::path::Path::new(&hit.path)));
+                        // The detectors that are decisive on their own stop the
+                        // process; everything else reports, because an installer that
+                        // unpacks a program and runs it has the same shape as a dropper.
+                        let decisive = matches!(
+                            hit.id,
+                            "behaviour/ransomware-shape"
+                                | "behaviour/byovd-known"
+                                | "behaviour/credential-tool"
+                                | "behaviour/event-log-clear"
+                        );
+                        if decisive && scored >= 120 {
+                            let token = crate::terminate::ProcessToken::of(record.process_id);
+                            let outcome = crate::terminate::stop(&token);
+                            log::warn!(
+                                "response: stopped pid {} after {} ({outcome:?})",
+                                record.process_id, hit.id
+                            );
+                        }
                         log::warn!(
                             "behaviour: {} (pid {}, score {}): {} {} (model {:?}, detected {})",
                             hit.id,
                             record.process_id,
-                            hit.score + agreement - signed_discount(std::path::Path::new(&hit.path)),
+                            scored,
                             hit.path,
                             hit.description,
                             model_score,
