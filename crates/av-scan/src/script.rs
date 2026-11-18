@@ -262,7 +262,7 @@ const INTERACTIONS: &[(&[&str], u16, &str, &str)] = &[
     ),
     (
         &["script/encoded-blob", "script/decoder"],
-        120,
+        70,
         "script/decoded-payload",
         "Encoded data is decoded into a file by the script, whatever the encoding or archive format.",
     ),
