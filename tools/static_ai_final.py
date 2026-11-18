@@ -28,23 +28,10 @@ SECTION_KEYS = ["count"]
 
 
 def vector(item):
-    features = []
-    features.extend((item.get("histogram", []) + [0] * 256)[:256])
-    features.extend((item.get("byteentropy", []) + [0] * 256)[:256])
-    general = item.get("general", {}) or {}
-    features.extend(float(general.get(key, 0) or 0) for key in GENERAL)
-    header = item.get("header", {}) or {}
-    features.extend(float(header.get(key, 0) or 0) for key in HEADER)
-    sections = item.get("section", {}) or {}
-    features.append(float(sections.get("count", 0) or 0))
-    entropies = sections.get("entropy") or []
-    features.extend([float(np.mean(entropies)), float(np.max(entropies)), float(np.min(entropies))] if entropies else [0.0, 0.0, 0.0])
-    imports = item.get("imports", {}) or {}
-    features.append(float(len(imports)))
-    features.append(float(sum(len(f) for f in imports.values() if isinstance(f, list))))
-    strings = item.get("strings", {}) or {}
-    features.extend(float(strings.get(key, 0) or 0) for key in ("numstrings", "avlength", "printables", "urls", "paths"))
-    return features
+    # The full vector: histogram, byte entropy, strings, general, header,
+    # sections, hashed imports and exports, and the data directories.
+    from static_ai_full import vector as full_vector
+    return full_vector(item)
 
 
 def load(path, limit):
@@ -77,7 +64,7 @@ def benchmark(name, train_mask, test_mask, x, y, iterations):
     malicious = probability[labels == 1]
     print("%s: train %d, test %d (%.1f%% malicious), AUC %.4f"
           % (name, train_mask.sum(), test_mask.sum(), 100 * labels.mean(), auc))
-    for fpr in (0.001, 0.0001):
+    for fpr in (0.01, 0.001, 0.0001):
         threshold = np.quantile(benign, 1 - fpr)
         print("   FPR %.4f -> recall %.1f%% (threshold %.4f)"
               % (fpr, 100 * (malicious >= threshold).mean(), threshold))
@@ -114,7 +101,7 @@ def main():
         model.fit(x[train_mask], y[train_mask])
         probability = model.predict_proba(x[test_mask])[:, 1]
         benign = model.predict_proba(x[~is_held & (y == 0), ])[:, 1]
-        for fpr in (0.001, 0.0001):
+        for fpr in (0.01, 0.001, 0.0001):
             threshold = np.quantile(benign, 1 - fpr)
             print("   held-out family recall at FPR %.4f: %.1f%% (threshold %.4f)"
                   % (fpr, 100 * (probability >= threshold).mean(), threshold))
