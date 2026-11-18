@@ -160,6 +160,24 @@ const FEATURES: &[Feature] = &[
         weight: 15,
         needles: &["-windowstylehidden", "-whidden", "-nop", "-noprofile"],
     },
+    Feature {
+        id: "script/embedded-archive",
+        description: "The script carries a base64-encoded archive.",
+        weight: 45,
+        needles: &["uesdbbq", "uesdb"],
+    },
+    Feature {
+        id: "script/base64-decoder",
+        description: "The script builds a JScript decoder from ActiveX objects.",
+        weight: 45,
+        needles: &["adodb.stream", "msxml2.domdocument"],
+    },
+    Feature {
+        id: "script/start-from-appdata",
+        description: "The script starts a program from the user profile's application data.",
+        weight: 40,
+        needles: &["start \"\" %appdata%", "%appdata%\\"],
+    },
 ];
 
 /// A combination that is worth more than its parts.
@@ -203,6 +221,12 @@ const INTERACTIONS: &[(&[&str], u16, &str, &str)] = &[
         100,
         "script/ransomware-shape",
         "The script carries ransom text and deletes the backups that would undo the damage.",
+    ),
+    (
+        &["script/embedded-archive", "script/base64-decoder", "script/start-from-appdata"],
+        100,
+        "script/base64-dropper",
+        "A base64 archive is decoded by a generated script and the result is started from application data, which is a dropper in a batch file.",
     ),
 ];
 
