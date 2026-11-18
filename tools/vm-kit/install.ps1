@@ -71,6 +71,16 @@ New-Item -ItemType Directory -Path 'C:\WenleAV' -Force | Out-Null
 New-Item -ItemType Directory -Path 'C:\ProgramData\WenleAV\logs' -Force | Out-Null
 New-Item -ItemType Directory -Path 'C:\ProgramData\WenleAV\models' -Force | Out-Null
 Copy-Item (Join-Path $Root 'wenle-av-service.exe') 'C:\WenleAV\wenle-av-service.exe' -Force
+Copy-Item (Join-Path $Root 'av_amsi.dll') 'C:\WenleAV\av_amsi.dll' -Force
+
+# Register the AMSI provider: the CLSID that implements IAntimalwareProvider
+# and the provider list Windows reads when a script host asks for a scan.
+$amsiClsid = '{3F1D8A52-6B4E-4C07-9A71-2D5F0C8B4E19}'
+New-Item -Path "HKLM:\SOFTWARE\Classes\CLSID\$amsiClsid\InprocServer32" -Force | Out-Null
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Classes\CLSID\$amsiClsid\InprocServer32" -Name '(default)' -Value 'C:\WenleAV\av_amsi.dll'
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Classes\CLSID\$amsiClsid\InprocServer32" -Name 'ThreadingModel' -Value 'Both'
+New-Item -Path "HKLM:\SOFTWARE\Microsoft\AMSI\Providers\$amsiClsid" -Force | Out-Null
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\AMSI\Providers\$amsiClsid" -Name '(default)' -Value 'Wenle AV'
 Write-Output 'service placed'
 
 # The minifilter is a filesystem service: `sc create` with type= filesystem is

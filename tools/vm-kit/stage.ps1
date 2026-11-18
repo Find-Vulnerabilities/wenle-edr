@@ -30,6 +30,8 @@ foreach ($name in 'wenle-test-driver.cer', 'wenle-test-driver.pfx') {
 # The signed driver currently installed is the one this host runs; the guest
 # should run the same build rather than a signed artefact from an older one.
 Copy-Item 'C:\Windows\System32\drivers\WenleAvFilter.sys' (Join-Path $stage 'WenleAvFilter.sys') -Force
+# The AMSI provider, so script content is examined before it runs.
+Copy-Item (Join-Path $release 'av_amsi.dll') (Join-Path $stage 'av_amsi.dll') -Force
 
 Copy-Item (Join-Path $PSScriptRoot 'install.ps1') (Join-Path $stage 'tools\vm-kit') -Force
 Copy-Item (Join-Path $PSScriptRoot 'collect.ps1') (Join-Path $stage 'tools\vm-kit') -Force
