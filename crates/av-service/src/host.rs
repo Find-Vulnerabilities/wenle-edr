@@ -2262,7 +2262,8 @@ impl Host {
                                 | "behaviour/byovd-known"
                                 | "behaviour/credential-tool"
                                 | "behaviour/event-log-clear"
-                        );
+                        ) || (hit.id == "behaviour/staged-and-run"
+                            && staged_dropper_content(std::path::Path::new(&hit.path)));
                         if decisive && scored >= 120 {
                             let token = crate::terminate::ProcessToken::of(record.process_id);
                             let outcome = crate::terminate::stop(&token);
@@ -3968,6 +3969,45 @@ pub fn detection_for_finding(finding: &av_realtime::Finding, action: DetectionAc
 /// A signed program outside the system directory: an installer rather than a
 /// signed Windows tool used by a technique. Signed system binaries are the
 /// whole point of living off the land, so they are never discounted.
+/// A file whose own content is a dropper: a long run of encoded data and a
+/// decoder named beside it. An installer writes an ordinary program and runs
+/// it, so it has neither.
+fn staged_dropper_content(path: &std::path::Path) -> bool {
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    if bytes.len() > 4 * 1024 * 1024 {
+        return false;
+    }
+    let text: String = String::from_utf8_lossy(&bytes)
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let mut run = 0usize;
+    let mut longest = 0usize;
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || byte == b'+' || byte == b'/' || byte == b'=' {
+            run += 1;
+            longest = longest.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    let decoder = [
+        "adodb.stream",
+        "frombase64string",
+        "certutil-decode",
+        "expand-archive",
+        "msxml2.domdocument",
+        "subprocess",
+        "tar-x",
+        "7z",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle));
+    longest >= 2048 && decoder
+}
 fn signed_discount(path: &std::path::Path) -> u16 {
     let text = path.to_string_lossy().to_ascii_lowercase();
     if text.starts_with("c:\\windows") || text.starts_with("\\\\?\\c:\\windows") {
