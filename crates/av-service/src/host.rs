@@ -489,7 +489,7 @@ fn trim_working_set_in_background() {
     std::thread::spawn(|| {
         let mut first = true;
         loop {
-            std::thread::sleep(std::time::Duration::from_secs(if first { 300 } else { 3600 }));
+            std::thread::sleep(std::time::Duration::from_secs(if first { 300 } else { 600 }));
             first = false;
             #[cfg(windows)]
             unsafe {
