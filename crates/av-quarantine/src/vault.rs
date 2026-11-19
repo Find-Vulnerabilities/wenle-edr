@@ -624,7 +624,10 @@ impl QuarantineVault {
         // Steps 2 and 3: seal, then write the blob. The blob is in place before
         // anything can refer to it, so the index never names a file that is not
         // there.
-        let sealed = crypto::seal(&self.key, self.policy.encrypt, &aad::item(id), bytes)?;
+        // Packed before it is sealed: a payload of text or code compresses
+        // by a factor of two or more, and the header says so on the way back.
+        let packed = crate::compress::pack(bytes);
+        let sealed = crypto::seal(&self.key, self.policy.encrypt, &aad::item(id), &packed)?;
         let blob = self.blob_path(id);
         fsutil::write_atomic(&blob, &sealed)?;
 
@@ -703,7 +706,9 @@ impl QuarantineVault {
                 path.display()
             ))
         })?;
-        crypto::open(&self.key, &aad::item(id), &stored)
+        let plain = crypto::open(&self.key, &aad::item(id), &stored)?;
+        // Old entries carry no header and come back as they went in.
+        crate::compress::unpack(&plain)
     }
 
     /// Check that a payload still hashes to what was recorded when it was

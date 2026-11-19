@@ -12,6 +12,7 @@ repository.workspace = true
 av-core.workspace = true
 
 serde.workspace = true
+zstd.workspace = true
 bincode.workspace = true
 thiserror.workspace = true
 chrono.workspace = true

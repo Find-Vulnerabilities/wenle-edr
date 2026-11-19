@@ -77,6 +77,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod attributes;
+pub mod compress;
 pub mod crypto;
 pub mod entry;
 pub mod error;
