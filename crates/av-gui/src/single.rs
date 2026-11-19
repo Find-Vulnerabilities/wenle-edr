@@ -344,7 +344,26 @@ fn claim_on_windows(data_dir: &Path, scan: Option<&Path>) -> Claim {
     }
     wake_existing(data_dir, scan);
     restore_window();
-    Claim::AlreadyRunning
+    if window_present() {
+        Claim::AlreadyRunning
+    } else {
+        // An instance that holds the name but never put a window up is a
+        // hung or half-started one: waking it changes nothing and exiting in
+        // its wake is what made the shortcut look dead. This launch takes the
+        // window role; two windows beat none, and the stale name closes with
+        // the stale process.
+        log::warn!("the instance holding the name has no window; showing one here");
+        let again = unsafe {
+            windows::Win32::System::Threading::CreateMutexW(None, false, PCWSTR(name.as_ptr()))
+        };
+        match again {
+            Ok(mutex) => Claim::Only(Owner { mutex, wakes: spawn_listener(data_dir) }),
+            Err(error) => {
+                log::warn!("no single-instance name on the second attempt: {error}");
+                Claim::Only(spawn_owner(data_dir))
+            }
+        }
+    }
 }
 
 /// Restore the running window, if the wake did not.
@@ -355,6 +374,19 @@ fn claim_on_windows(data_dir: &Path, scan: Option<&Path>) -> Claim {
 /// second launch that says nothing happened is worse than one that raises the
 /// window and does nothing else, so the launch also restores it directly; that
 /// does not depend on the first process receiving a frame.
+#[cfg(windows)]
+fn window_present() -> bool {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+    let title = to_wide("Wenle AV");
+    // SAFETY: the title is NUL-terminated and outlives the call.
+    unsafe { FindWindowW(PCWSTR::null(), PCWSTR(title.as_ptr())).is_ok() }
+}
+
+#[cfg(not(windows))]
+fn window_present() -> bool {
+    true
+}
 #[cfg(windows)]
 fn restore_window() {
     use windows::core::PCWSTR;
