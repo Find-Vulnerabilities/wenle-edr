@@ -175,8 +175,65 @@ struct Args {
 #[global_allocator]
 static ALLOCATOR: av_core::alloc::Reporting = av_core::alloc::Reporting;
 
+/// Re-launch this program elevated when it is not already.
+///
+/// The window needs the service's control pipe, and that pipe is administered
+/// by a service running as SYSTEM. A launch from the shortcut runs with the
+/// logged-in user's token, fails to open the pipe, and used to exit without a
+/// word; the user saw a shortcut that did nothing. The elevated relaunch makes
+/// the UAC prompt the answer instead of silence.
+///
+/// Returns `true` when this process should continue (already elevated), and
+/// `false` when it should exit because another, elevated instance was started.
+#[cfg(windows)]
+fn ensure_elevated() -> bool {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::Shell::{IsUserAnAdmin, ShellExecuteW};
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    // SAFETY: a documented query with no arguments and no preconditions.
+    if unsafe { IsUserAnAdmin().as_bool() } {
+        return true;
+    }
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(error) => {
+            report_fatal(&format!("the program's own path could not be read: {error}"));
+            return false;
+        }
+    };
+    let verb: Vec<u16> = "runas\0".encode_utf16().collect();
+    let file: Vec<u16> = exe.to_string_lossy().encode_utf16().chain(Some(0)).collect();
+    // SAFETY: both strings are NUL-terminated and outlive the call; the
+    // remaining arguments are the documented defaults.
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            PCWSTR(verb.as_ptr()),
+            PCWSTR(file.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    // ShellExecuteW's documented success test is a return above 32.
+    if result.0 as isize > 32 {
+        false
+    } else {
+        report_fatal("administrator rights are needed and the prompt was refused");
+        false
+    }
+}
+
+#[cfg(not(windows))]
+fn ensure_elevated() -> bool {
+    true
+}
 fn main() -> std::process::ExitCode {
     init_logging();
+    if !ensure_elevated() {
+        return std::process::ExitCode::FAILURE;
+    }
     let args = Args::parse();
 
     // Where the product's directories are is resolved from the running
