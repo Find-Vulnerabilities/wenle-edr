@@ -188,11 +188,40 @@ static ALLOCATOR: av_core::alloc::Reporting = av_core::alloc::Reporting;
 #[cfg(windows)]
 fn ensure_elevated() -> bool {
     use windows::core::PCWSTR;
-    use windows::Win32::UI::Shell::{IsUserAnAdmin, ShellExecuteW};
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-    // SAFETY: a documented query with no arguments and no preconditions.
-    if unsafe { IsUserAnAdmin().as_bool() } {
+    // `IsUserAnAdmin` answers a question about group membership, not about
+    // this process: an administrator who accepted UAC once and then started
+    // the shortcut normally gets a filtered token that is still "admin" by
+    // that test, and the window went on to fail on the pipe. Token elevation
+    // is the question that matters here.
+    let mut token = HANDLE::default();
+    // SAFETY: the current process pseudo-handle is always open for query.
+    let opened = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) };
+    let mut elevated = false;
+    if opened.is_ok() {
+        let mut information = TOKEN_ELEVATION::default();
+        let mut returned = 0u32;
+        // SAFETY: `information` is the documented struct for this class and
+        // its size is what is passed; `returned` is a local.
+        let queried = unsafe {
+            GetTokenInformation(
+                token,
+                TokenElevation,
+                Some(&mut information as *mut _ as *mut core::ffi::c_void),
+                std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+                &mut returned,
+            )
+        };
+        elevated = queried.is_ok() && information.TokenIsElevated != 0;
+        // SAFETY: a live handle this function owns, not used again.
+        unsafe { let _ = windows::Win32::Foundation::CloseHandle(token); }
+    }
+    if elevated {
         return true;
     }
     let exe = match std::env::current_exe() {
