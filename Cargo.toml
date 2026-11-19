@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/av-cloud",
+
     "crates/av-core",
     "crates/av-fs",
     "crates/av-patterns",

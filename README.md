@@ -144,28 +144,3 @@ repositories, each keeping its own licence � not uniform, and some state none.
 That script is a convenience for the person running it, not a redistribution by
 this project: whatever you compile from it is yours to keep and not to hand on.
 
-## Cloud reputation
-
-`wenle cloud <path>` asks a reputation provider whether a SHA-256 is a known
-sample. Only the hash leaves the machine; the file, its name and its path do not.
-The command prints the hash before asking, so what would be sent is visible
-first.
-
-A known hash is a fact the provider asserts and the answer is `Malicious`. An
-unknown hash is *not* a clean file -- it means the provider has never seen it,
-which is the case the local engine and the model exist for -- and the command
-says so.
-
-The first provider is [MalwareBazaar](https://bazaar.abuse.ch/api/) by abuse.ch.
-Its community API is free of charge for not-for-profit work under fair use, and
-it requires an `Auth-Key`, which you obtain at
-[auth.abuse.ch](https://auth.abuse.ch/) and pass with `--api-key` or
-`WENLE_CLOUD_KEY`. Commercial use may require a paid subscription managed by
-Spamhaus, and abuse.ch's terms do not permit using its data to train an AI model
-without written consent; this product's model is trained on EMBER and never on
-provider data.
-
-Lookups are cached for a day and rate limited to 60 queries a minute by default.
-A provider that is offline, slow or refuses the key is reported as *unavailable*
-and never as clean.
-

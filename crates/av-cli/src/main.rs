@@ -115,7 +115,6 @@ fn main() -> std::process::ExitCode {
 
     let outcome = match &args.command {
         Command::Scan(scan) => commands::scan::run(scan, &globals, &context),
-        Command::Cloud(cloud) => commands::cloud::run(cloud, &globals, &context),
         Command::Memory(memory) => commands::memory::run(memory, &globals, &context),
         Command::Build(build) => commands::build::run(build, &globals, &context),
         Command::Db(db) => commands::db::run(&db.command, &globals, &context),

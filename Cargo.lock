@@ -549,7 +549,6 @@ version = "1.0.5"
 dependencies = [
  "anyhow",
  "av-archive",
- "av-cloud",
  "av-core",
  "av-driver-proto",
  "av-fs",
@@ -580,17 +579,6 @@ dependencies = [
  "toml",
  "ureq",
  "walkdir",
-]
-
-[[package]]
-name = "av-cloud"
-version = "1.0.5"
-dependencies = [
- "av-core",
- "log",
- "serde",
- "serde_json",
- "ureq",
 ]
 
 [[package]]
@@ -3880,8 +3868,6 @@ dependencies = [
  "once_cell",
  "rustls",
  "rustls-pki-types",
- "serde",
- "serde_json",
  "url",
  "webpki-roots 0.26.11",
 ]
