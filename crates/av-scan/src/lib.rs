@@ -50,6 +50,7 @@
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
 
+pub mod ai;
 pub mod archive;
 pub mod blocklist;
 pub mod engine;

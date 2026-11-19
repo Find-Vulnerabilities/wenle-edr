@@ -53,6 +53,9 @@ def main():
         text = handle.read()
     trees = parse_arrays(text)
     features = 0
+    import re
+    match = re.search(r"max_feature_idx=(\d+)", text)
+    declared = int(match.group(1)) + 1 if match else 0
     payload = bytearray()
     for tree in trees:
         leaves = int(tree["num_leaves"])
@@ -74,7 +77,7 @@ def main():
         payload += struct.pack("<%di" % len(right), *right)
         payload += struct.pack("<%df" % len(values), *values)
     with open(target, "wb") as handle:
-        handle.write(struct.pack("<III", 0x57414931, len(trees), features))
+        handle.write(struct.pack("<III", 0x57414931, len(trees), max(features, declared)))
         handle.write(payload)
     print("trees %d, features %d, %.1f MB -> %s"
           % (len(trees), features, (len(payload) + 12) / 1024 / 1024, target))

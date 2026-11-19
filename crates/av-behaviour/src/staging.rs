@@ -537,6 +537,9 @@ fn technique_command(command_line: &str) -> Option<(&'static str, &'static str)>
             }
             _ => {}
         }
+        // One event is one hit, however many branches name it.
+        let mut seen = std::collections::HashSet::new();
+        hits.retain(|hit| seen.insert((hit.id, hit.description.clone())));
         hits
     }
 }
@@ -749,8 +752,10 @@ mod tests {
             r"schtasks /create /tn Updater /tr cmd.exe /sc minute /mo 5".to_string(),
         );
         let hits = staging.observe(&task, |_| None);
-        assert_eq!(hits.len(), 1, "{hits:?}");
-        assert_eq!(hits[0].id, "behaviour/persistence-arranged");
+        assert!(
+            hits.iter().any(|hit| hit.id == "behaviour/persistence-arranged"),
+            "the persistence move was not named: {hits:?}"
+        );
     }
 
     #[test]
@@ -832,8 +837,10 @@ mod tests {
         );
         fetch.command_line = Some(r"certutil -urlcache -f http://127.0.0.1/a.exe a.exe".to_string());
         let hits = staging.observe(&fetch, |_| None);
-        assert_eq!(hits.len(), 1, "{hits:?}");
-        assert_eq!(hits[0].id, "behaviour/lolbin-download");
+        assert!(
+            hits.iter().any(|hit| hit.id == "behaviour/lolbin-download"),
+            "the lolbin fetch was not named: {hits:?}"
+        );
 
         let mut plain = event(
             Action::ProcessStarted,

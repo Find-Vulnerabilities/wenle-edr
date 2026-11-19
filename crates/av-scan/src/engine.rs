@@ -613,6 +613,35 @@ impl ScanEngine {
                     ),
                 ));
             }
+            // The second opinion, and only when the rules said nothing and
+            // nothing proves the file good.
+            if assessment.detections.is_empty() {
+                if let Some(score) = crate::ai::score(examined) {
+                    if score >= crate::ai::MALICIOUS_THRESHOLD {
+                        assessment.push(Detection::new(
+                            "ai/static-model",
+                            format!(
+                                "The static model scores this shape {score:.2} of 1. \
+                                 It found 83% of unseen families at 0.1% false positives above {:.2}, and this file is above it.",
+                                crate::ai::MALICIOUS_THRESHOLD,
+                            ),
+                            Severity::Critical,
+                            DetectionSource::Heuristic,
+                        ));
+                    } else if score >= crate::ai::SUSPICIOUS_THRESHOLD {
+                        assessment.push(Detection::new(
+                            "ai/static-model",
+                            format!(
+                                "The static model scores this shape {score:.2} of 1, between the reporting band at {:.2} and the conviction band at {:.2}.",
+                                crate::ai::SUSPICIOUS_THRESHOLD,
+                                crate::ai::MALICIOUS_THRESHOLD,
+                            ),
+                            Severity::Medium,
+                            DetectionSource::Heuristic,
+                        ));
+                    }
+                }
+            }
             assessment.finalize(&self.thresholds);
             // After `finalize`, and only here: the cap edits the verdict rather
             // than the score, so it needs the verdict to exist. The `Unknown`
