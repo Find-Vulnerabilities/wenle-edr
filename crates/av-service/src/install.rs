@@ -929,6 +929,25 @@ fn install_shortcut(image: &std::path::Path) -> Result<(), ServiceError> {
             message: "the shortcut helper failed".to_string(),
         });
     }
+    // The window needs the service control pipe, which a filtered token cannot
+    // open. The shortcut says so to Explorer with the RunAs flag, so the UAC
+    // prompt is the first thing a double click produces instead of a windowless
+    // process that exits without a word.
+    let elevate = format!(
+        "$p = '{link}'; $b = [System.IO.File]::ReadAllBytes($p); \
+         $f = [BitConverter]::ToUInt32($b, 0x14); \
+         [Array]::Copy([BitConverter]::GetBytes([uint32]($f -bor 0x00002000)), 0, $b, 0x14, 4); \
+         [System.IO.File]::WriteAllBytes($p, $b)",
+        link = link.display(),
+    );
+    match std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &elevate])
+        .status()
+    {
+        Ok(status) if status.success() => {}
+        Ok(_) => log::warn!("the shortcut was made but not marked to elevate"),
+        Err(error) => log::warn!("the shortcut could not be marked to elevate: {error}"),
+    }
     log::info!("a shortcut to the window is on the desktop at {}", link.display());
     Ok(())
 }
