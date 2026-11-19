@@ -79,6 +79,10 @@ def main():
     )
     model.fit(x[train], y[train])
     print("trained", flush=True)
+    import os
+    out = os.path.join(os.path.dirname(__file__), "..", "target", "static_model.txt")
+    model.booster_.save_model(out)
+    print("saved", out, flush=True)
 
     benchmark = np.where(test_benign)[0]
     if len(benchmark) > 60000:

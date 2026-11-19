@@ -64,6 +64,11 @@ pub struct Args {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Ask a cloud reputation provider about a file, by hash.
+    ///
+    /// Only the SHA-256 is sent. The command prints the hash first so that
+    /// what would leave the machine is visible before it does.
+    Cloud(CloudArgs),
     /// Scan files, directories, or both.
     Scan(Box<ScanArgs>),
     /// Examine what running processes are holding in memory.
@@ -784,6 +789,25 @@ impl ScopeArgs {
             _ => None,
         }
     }
+}
+
+/// The `cloud` subcommand's own arguments.
+#[derive(Debug, ClapArgs)]
+pub struct CloudArgs {
+    /// The file to ask about.
+    #[arg(value_name = "PATH")]
+    pub path: std::path::PathBuf,
+
+    /// The provider's API key; `WENLE_CLOUD_KEY` is read when this is absent.
+    #[arg(long, value_name = "KEY")]
+    pub api_key: Option<String>,
+
+    /// How long to wait for an answer, in milliseconds.
+    ///
+    /// A provider that does not answer in time is reported as unavailable and
+    /// never as clean.
+    #[arg(long, default_value_t = 3000, value_name = "MS")]
+    pub timeout_ms: u64,
 }
 
 /// The `memory` subcommand's own arguments.

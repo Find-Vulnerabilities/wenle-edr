@@ -1,0 +1,16 @@
+[package]
+name = "av-cloud"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Cloud hash reputation: a SHA-256 is asked about, and the file never leaves the machine."
+
+[dependencies]
+av-core = { path = "../av-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+ureq = { version = "2", default-features = false, features = ["tls", "json"] }

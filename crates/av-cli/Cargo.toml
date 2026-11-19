@@ -31,6 +31,7 @@ av-archive.workspace = true
 sha2.workspace = true
 av-pe.workspace = true
 av-scan.workspace = true
+av-cloud = { path = "../av-cloud" }
 av-memory.workspace = true
 av-signatures.workspace = true
 av-quarantine.workspace = true

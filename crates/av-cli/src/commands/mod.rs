@@ -17,6 +17,7 @@
 //! its premise. See [`Context::paths`] for the half of the layout it does take.
 
 pub mod build;
+pub mod cloud;
 pub mod config;
 pub mod db;
 pub mod integrate;
