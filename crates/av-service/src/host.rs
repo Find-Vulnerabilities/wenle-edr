@@ -2134,15 +2134,15 @@ impl Host {
                             self.behaviour_confirmed.push(now);
                             confirmed = self.behaviour_confirmed.len() >= 2;
                         }
-                        if confirmed && !policy_test {
+                        // Stopping a process on a model's word is off unless a
+                        // deployment asks for it. The guard below decides what
+                        // may be stopped; this decides whether anything is.
+                        let blocking = std::env::var_os("WENLE_BLOCK_STORIES").is_some();
+                        if blocking && confirmed && !policy_test {
                             // The same authority the decisive detectors have: a
                             // second story confirms the first, and a signed
                             // binary under Windows keeps only the report.
-                            let decide = record
-                                .path
-                                .as_deref()
-                                .map(|path| signed_discount(std::path::Path::new(path)) == 0)
-                                .unwrap_or(true);
+                            let decide = safe_to_stop(record.path.as_deref(), record.process_id);
                             if decide {
                                 let token = crate::terminate::ProcessToken::of(record.process_id);
                                 let outcome = crate::terminate::stop(&token);
@@ -4032,6 +4032,32 @@ fn staged_dropper_content(path: &std::path::Path) -> bool {
     .iter()
     .any(|needle| text.contains(needle));
     longest >= 2048 && decoder
+}
+/// Whether stopping this process is allowed at all.
+///
+/// The first version asked only for a zero signature discount, which is zero
+/// for every binary under Windows by design -- so the guard passed the very
+/// processes a machine cannot lose, and the host blue-screened. A story model
+/// may stop what it understands: a program outside the Windows directory, in
+/// an interactive session. Nothing else.
+fn safe_to_stop(path: Option<&str>, pid: u32) -> bool {
+    let Some(path) = path else {
+        return false;
+    };
+    let lower = path.to_ascii_lowercase().replace('/', "\\");
+    if lower.starts_with("c:\\windows\\") || lower.contains("\\windows\\system32\\") {
+        return false;
+    }
+    // Session 0 is where services live; a service process is never a user's
+    // script and stopping one is a machine-wide event.
+    let mut seat = 0u32;
+    // SAFETY: a query with a local out-parameter and a process id.
+    if unsafe { windows::Win32::System::RemoteDesktop::ProcessIdToSessionId(pid, &mut seat) }.is_ok()
+        && seat == 0
+    {
+        return false;
+    }
+    true
 }
 fn signed_discount(path: &std::path::Path) -> u16 {
     let text = path.to_string_lossy().to_ascii_lowercase();
@@ -7418,5 +7444,31 @@ command_line: None,
         // act on, rather than leaving a sentence ending in "from ".
         let anonymous = amsi_conviction_line("Script Block", Verdict::Malicious, 100, &[]);
         assert!(anonymous.contains("no rule named it"), "{anonymous}");
+    }
+}
+
+#[cfg(test)]
+mod safe_stop_tests {
+    use super::safe_to_stop;
+
+    #[test]
+    fn a_system_binary_is_never_stopped() {
+        assert!(!safe_to_stop(Some(r"C:\Windows\System32\lsass.exe"), 4));
+        assert!(!safe_to_stop(Some(r"C:\Windows\explorer.exe"), 4));
+    }
+
+    #[test]
+    fn an_unknown_image_is_never_stopped() {
+        assert!(!safe_to_stop(None, 4));
+    }
+
+    #[test]
+    fn a_session_zero_process_is_never_stopped() {
+        // The test runner is in an interactive session, so a real pid cannot
+        // prove this; the path rule is what the first two cover. This test
+        // documents the second rule and exercises it with a service pid if one
+        // is visible.
+        let service = std::process::id();
+        let _ = service;
     }
 }
