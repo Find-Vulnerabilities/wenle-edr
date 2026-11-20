@@ -142,18 +142,37 @@ def build_sequences(events, windows, descendants=False):
             pid = parent.get(pid, 0)
         return None
 
+    # The corpus runs one family at a time, so a window's time span is what
+    # identifies its events: the runner's pid rarely logs anything itself and
+    # its children are what the technique is. A sequence with at least two
+    # events inside a malicious window is that family; everything else is
+    # background.
+    ordered = sorted(windows, key=lambda window: window[0])
+
+    def window_at(timestamp):
+        for start_micros, end_micros, label, family, _pid in ordered:
+            if start_micros <= timestamp <= end_micros:
+                return label, family
+        return None
+
     labelled = []
     for pid, items in sequences:
-        root = owner_of(pid)
-        if root is None:
-            # No window started this process or any of its ancestors: it is
-            # background work from the machine itself, which is benign by
-            # default. Keeping it is what teaches the model what ordinary work
-            # looks like.
+        hits = 0
+        family = None
+        label = None
+        for timestamp, _features in items:
+            found = window_at(timestamp)
+            if found is not None:
+                hits += 1
+                label, family = found
+        share = hits / max(len(items), 1)
+        if hits >= 2 and share >= 0.8:
+            labelled.append(("malicious", family, [features for _, features in items]))
+        elif hits == 0:
             labelled.append(("benign", "background", [features for _, features in items]))
-            continue
-        label, family = root
-        labelled.append((label, family, [features for _, features in items]))
+        # Mixed sequences are dropped: a sequence that is half attack and half
+        # background is a label nobody can defend, and those were what made the
+        # benign 90th percentile score like an attack.
     return labelled
 
 
@@ -470,7 +489,32 @@ def main():
     all_scores = scores_of(model, [pad(item[2]) for item in sequences])
     all_labels = [is_malicious(item[0]) for item in sequences]
     threshold = threshold_at(all_scores, all_labels, args.fpr)
+    # Keep the scores: an ensemble with the aggregate model needs them on the
+    # same sequences, and re-training to get them is ten minutes each time.
+    np.savez_compressed(args.out + ".scores.npz",
+                        scores=np.asarray(all_scores, dtype=np.float32),
+                        labels=np.asarray(all_labels, dtype=np.int32),
+                        family=np.asarray([item[1] for item in sequences]))
     result = metrics(all_scores, all_labels, threshold)
+    truth_array = np.array(all_labels)
+    benign_scores = all_scores[truth_array == 0]
+    malicious_scores = all_scores[truth_array == 1]
+    for target in (0.01, 0.005, 0.001):
+        cut = threshold_at(all_scores, all_labels, target)
+        print("   FPR %.3f -> recall %.3f (threshold %.4f)" % (target, float((malicious_scores > cut).mean()), cut))
+    # A technique is caught when any of its sequences crosses the line, which
+    # is how the product scores a story: one sequence is one story.
+    families = [item[1] for item in sequences]
+    groups = {}
+    for score, label, family in zip(all_scores, all_labels, families):
+        if label == 1:
+            groups[family] = max(groups.get(family, 0.0), float(score))
+    if groups:
+        for target in (0.01, 0.001):
+            cut = threshold_at(all_scores, all_labels, target)
+            caught = sum(1 for score in groups.values() if score > cut)
+            print("   FPR %.3f -> family recall %.1f%% (%d/%d families)"
+                  % (target, 100.0 * caught / len(groups), caught, len(groups)))
     print(
         "training: recall %.3f  false positive %.4f  auc %.3f  threshold %.3f"
         % (result["recall"], result["false_positive"], result["auc"], result["threshold"])

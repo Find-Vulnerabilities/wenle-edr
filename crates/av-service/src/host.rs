@@ -299,6 +299,8 @@ pub struct Host {
     /// corpus, and 0.2 % transfer from public captures. A model that good at
     /// ranking and that bad at deciding must not decide.
     behaviour_model: Option<av_behaviour::Model>,
+    /// The tree model over flattened stories, when one is embedded.
+    story_model: Option<av_behaviour::StoryModel>,
     /// Each process's recent events, for the sequence model.
     behaviour_stories: std::collections::HashMap<u32, Vec<av_behaviour::Features>>,
     /// When each process last delivered an event, so a story is split at an
@@ -600,6 +602,7 @@ impl Host {
             last_process_event: None,
             process_gap_warned: false,
             behaviour_model: behaviour_model_from_environment(),
+            story_model: av_behaviour::StoryModel::load(),
             behaviour_stories: std::collections::HashMap::new(),
             behaviour_story_gap: std::collections::HashMap::new(),
             behaviour_model_reported: std::collections::HashMap::new(),
@@ -2011,7 +2014,7 @@ impl Host {
                 // The sequence model, when one is installed: every eighth event
                 // of a story is scored, which is often enough to catch a burst
                 // and cheap enough not to score on every write of a build.
-                if let Some(model) = self.behaviour_model.as_ref() {
+                if self.behaviour_model.is_some() || self.story_model.is_some() {
                     if self.behaviour_stories.len() > 1024 {
                         // One entry per process, and the map is not pruned when a
                         // process ends (the driver does not report every end);
@@ -2081,7 +2084,11 @@ impl Host {
                         let minimum = if script_host { 2 } else { 4 };
                         let score_now = story.len() >= minimum && (tick <= 8 || tick % 8 == 0);
                     if score_now {
-                        let score = model.score(story);
+                        let score = match (self.story_model.as_ref(), self.behaviour_model.as_ref()) {
+                            (Some(story_model), _) => story_model.score(story),
+                            (None, Some(model)) => model.score(story),
+                            (None, None) => 0.0,
+                        };
                         if score >= 0.90 {
                             log::debug!(
                                 "behaviour: score {:.3} pid {} len {} ({})",
@@ -2126,6 +2133,24 @@ impl Host {
                                 .retain(|at| now.duration_since(*at).as_secs() < 300);
                             self.behaviour_confirmed.push(now);
                             confirmed = self.behaviour_confirmed.len() >= 2;
+                        }
+                        if confirmed && !policy_test {
+                            // The same authority the decisive detectors have: a
+                            // second story confirms the first, and a signed
+                            // binary under Windows keeps only the report.
+                            let decide = record
+                                .path
+                                .as_deref()
+                                .map(|path| signed_discount(std::path::Path::new(path)) == 0)
+                                .unwrap_or(true);
+                            if decide {
+                                let token = crate::terminate::ProcessToken::of(record.process_id);
+                                let outcome = crate::terminate::stop(&token);
+                                log::warn!(
+                                    "response: stopped pid {} after behaviour/story-model ({outcome:?})",
+                                    record.process_id
+                                );
+                            }
                         }
                         // The uncertain tier: a story above 0.98 that did not
                         // confirm is reported as suspicious, not malicious, at most
