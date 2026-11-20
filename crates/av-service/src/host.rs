@@ -2137,13 +2137,16 @@ impl Host {
                         // Stopping a process on a model's word is off unless a
                         // deployment asks for it. The guard below decides what
                         // may be stopped; this decides whether anything is.
-                        let blocking = std::env::var_os("WENLE_BLOCK_STORIES").is_some();
+                        let mode = std::env::var("WENLE_BLOCK_STORIES").unwrap_or_default();
+                        // Off unless a deployment asks. The model scores
+                        // system and tooling stories as high as attacks on
+                        // this machine: it killed the agent that measured it.
+                        let blocking = !mode.is_empty() && mode != "off";
                         if blocking && confirmed && !policy_test {
                             // The same authority the decisive detectors have: a
                             // second story confirms the first, and a signed
                             // binary under Windows keeps only the report.
-                            let subject = record.path.as_deref().map(std::path::Path::new);
-                            let decide = safe_to_stop(subject, record.process_id);
+                            let decide = safe_to_stop(record.process_id);
                             if decide {
                                 let token = crate::terminate::ProcessToken::of(record.process_id);
                                 let outcome = crate::terminate::stop(&token);
@@ -4041,31 +4044,55 @@ fn staged_dropper_content(path: &std::path::Path) -> bool {
 /// processes a machine cannot lose, and the host blue-screened. A story model
 /// may stop what it understands: a program outside the Windows directory, in
 /// an interactive session. Nothing else.
-fn safe_to_stop(image: Option<&std::path::Path>, pid: u32) -> bool {
-    let Some(image) = image else {
+/// The image a pid is running, asked of the process itself.
+fn process_image(pid: u32) -> Option<std::path::PathBuf> {
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    // SAFETY: a query handle, a local buffer and a local length; the handle is
+    // closed on every path.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut buffer = [0u16; 1024];
+        let mut size = buffer.len() as u32;
+        let result = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, PWSTR(buffer.as_mut_ptr()), &mut size);
+        let _ = CloseHandle(handle);
+        result.ok()?;
+        Some(std::path::PathBuf::from(String::from_utf16_lossy(&buffer[..size as usize])))
+    }
+}
+
+/// Images a story model may never stop, by name.
+const PROTECTED_IMAGES: [&str; 14] = [
+    "csrss.exe", "wininit.exe", "winlogon.exe", "services.exe",
+    "lsass.exe", "smss.exe", "svchost.exe", "spoolsv.exe",
+    "sihost.exe", "explorer.exe", "dwm.exe", "taskhostw.exe",
+    "msmpeng.exe", "registry",
+];
+
+/// Whether stopping this process is allowed at all.
+///
+/// By identity, not by path: the processes whose death takes the session with
+/// it are refused by name, everything under C:\Windows keeps only the report,
+/// and a third-party program or service elsewhere is what a story may stop.
+fn safe_to_stop(pid: u32) -> bool {
+    let Some(image) = process_image(pid) else {
         return false;
     };
-    let path = image.to_string_lossy().to_string();
-    let lower = path.to_ascii_lowercase().replace('/', "\\");
-    // A registry key is not a file and names no program: only a path with a
-    // drive letter can be the image a stop would act on.
-    if !lower.contains(":\\") {
+    let path = image.to_string_lossy().to_ascii_lowercase().replace('/', "\\");
+    let name = path.rsplit('\\').next().unwrap_or("");
+    if PROTECTED_IMAGES.contains(&name) {
         return false;
     }
-    if lower.starts_with("c:\\windows\\") || lower.contains("\\windows\\system32\\") {
-        return false;
-    }
-    // Session 0 is where services live; a service process is never a user's
-    // script and stopping one is a machine-wide event.
-    let mut seat = 0u32;
-    // SAFETY: a query with a local out-parameter and a process id.
-    if unsafe { windows::Win32::System::RemoteDesktop::ProcessIdToSessionId(pid, &mut seat) }.is_ok()
-        && seat == 0
-    {
+    if path.starts_with("c:\\windows\\") {
         return false;
     }
     true
 }
+
 fn signed_discount(path: &std::path::Path) -> u16 {
     let text = path.to_string_lossy().to_ascii_lowercase();
     if text.starts_with("c:\\windows") || text.starts_with("\\\\?\\c:\\windows") {
