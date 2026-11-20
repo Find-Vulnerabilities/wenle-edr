@@ -2142,7 +2142,8 @@ impl Host {
                             // The same authority the decisive detectors have: a
                             // second story confirms the first, and a signed
                             // binary under Windows keeps only the report.
-                            let decide = safe_to_stop(record.path.as_deref(), record.process_id);
+                            let subject = record.path.as_deref().map(std::path::Path::new);
+                            let decide = safe_to_stop(subject, record.process_id);
                             if decide {
                                 let token = crate::terminate::ProcessToken::of(record.process_id);
                                 let outcome = crate::terminate::stop(&token);
@@ -4040,11 +4041,17 @@ fn staged_dropper_content(path: &std::path::Path) -> bool {
 /// processes a machine cannot lose, and the host blue-screened. A story model
 /// may stop what it understands: a program outside the Windows directory, in
 /// an interactive session. Nothing else.
-fn safe_to_stop(path: Option<&str>, pid: u32) -> bool {
-    let Some(path) = path else {
+fn safe_to_stop(image: Option<&std::path::Path>, pid: u32) -> bool {
+    let Some(image) = image else {
         return false;
     };
+    let path = image.to_string_lossy().to_string();
     let lower = path.to_ascii_lowercase().replace('/', "\\");
+    // A registry key is not a file and names no program: only a path with a
+    // drive letter can be the image a stop would act on.
+    if !lower.contains(":\\") {
+        return false;
+    }
     if lower.starts_with("c:\\windows\\") || lower.contains("\\windows\\system32\\") {
         return false;
     }
