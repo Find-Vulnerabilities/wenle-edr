@@ -53,8 +53,12 @@ FAMILIES = {
         "connect", "send", "recv", "getaddrinfo", "dnsquery",
     ],
     "defence_tampering": [
-        "setmppreference", "deletefile", "regdeletekey", "regdeletevalue",
-        "terminateprocess", "ntterminateprocess",
+        "setmppreference", "disablerealtime", "vssadmin", "delete shadows",
+        "bcdedit", "recoveryenabled", "wevtutil", "cleareventlog",
+    ],
+    "process_termination": [
+        "terminateprocess", "ntterminateprocess", "deletefile",
+        "regdeletekey", "regdeletevalue",
     ],
     "credential_access": [
         "lsass", "mimikatz", "credread", "credential", "cryptunprotectdata",
@@ -75,6 +79,7 @@ SEVERITY = {
     "anti_analysis": 0.4,
     "process_enum": 0.3,
     "file_write": 0.2,
+    "process_termination": 0.15,
 }
 
 

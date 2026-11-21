@@ -104,6 +104,14 @@ def load(directory, label, skip=()):
         except Exception:
             continue
         name = os.path.basename(os.path.dirname(path))
+        events = sum(
+            1
+            for run in report.get("runs") or []
+            for event in run.get("events") or []
+            if event.get("event") == "api"
+        )
+        if events < 25:
+            continue
         if any(token.lower() in name.lower() for token in skip):
             continue
         rows.append(features(report))
