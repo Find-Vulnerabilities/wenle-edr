@@ -133,18 +133,47 @@ fn report(text: &str, assessment: &mut Assessment) {
         "sandbox/behaviour",
         format!(
             "The sandbox ran this sample under a virtual clock: behaviour score {score:.2} of 1, \
-             families: {}. {} unpacked region(s) were convicted by this product's own engine. \
-             Reported, not convicted: the sandbox is corroborating evidence.",
+             families: {}. Reported, not convicted: the sandbox is corroborating evidence.",
             if families.is_empty() {
                 "none".to_string()
             } else {
                 families.join(", ")
-            },
-            unpacked
+            }
         ),
         severity,
         DetectionSource::Heuristic,
     ));
+
+    // The unpacked regions the sandbox produced were judged by this product's
+    // own engine while it ran; a conviction there is a static finding about
+    // content that exists only after the packer ran. It is a separate detection
+    // so a reader can tell "the behaviour looked bad" from "the unpacked code
+    // was convicted".
+    let mut convicted: Vec<String> = Vec::new();
+    if let Some(items) = value.get("unpacked").and_then(|value| value.as_array()) {
+        for item in items {
+            if item.get("verdict").and_then(|verdict| verdict.as_str()) == Some("malicious") {
+                let name = item
+                    .get("file")
+                    .and_then(|file| file.as_str())
+                    .unwrap_or("unpacked region");
+                convicted.push(name.to_string());
+            }
+        }
+    }
+    if !convicted.is_empty() {
+        assessment.push(Detection::new(
+            "sandbox/unpacked",
+            format!(
+                "After the packer ran, this product's engine convicted {} unpacked region(s): {}. \
+                 That is a static finding about code no file on disk contains.",
+                convicted.len(),
+                convicted.join(", ")
+            ),
+            Severity::High,
+            DetectionSource::Heuristic,
+        ));
+    }
 }
 
 #[cfg(test)]
