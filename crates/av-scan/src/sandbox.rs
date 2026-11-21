@@ -53,26 +53,38 @@ fn is_portable_executable(path: &Path) -> bool {
 /// Called once per scan with the file's SHA-256. Returns true when a cached
 /// answer was found, whether or not it produced a detection, so a caller can
 /// tell "the sandbox has looked" from "it has not".
-pub fn consult(
-    path: &Path,
-    sha256: Option<&str>,
-    assessment: &mut Assessment,
-) -> bool {
+pub fn cached(path: &Path, sha256: Option<&str>, assessment: &mut Assessment) -> bool {
     let Some(sha256) = sha256 else {
         return false;
     };
     if !is_portable_executable(path) {
         return false;
     }
-    let root = root();
-    let result = root.join("results").join(format!("{sha256}.json"));
-    if let Ok(text) = std::fs::read_to_string(&result) {
-        report(&text, assessment);
-        return true;
-    }
+    let result = root().join("results").join(format!("{sha256}.json"));
+    let Ok(text) = std::fs::read_to_string(&result) else {
+        return false;
+    };
+    report(&text, assessment);
+    true
+}
 
-    // No answer yet. Ask for one, once per file.
-    let queue = root.join("queue");
+/// Whether a cached answer exists for these bytes.
+pub fn has_result(sha256: Option<&str>) -> bool {
+    let Some(sha256) = sha256 else {
+        return false;
+    };
+    root().join("results").join(format!("{sha256}.json")).exists()
+}
+
+/// Ask for a sandbox run of this file, once.
+pub fn enqueue(path: &Path, sha256: Option<&str>) {
+    let Some(sha256) = sha256 else {
+        return;
+    };
+    if !is_portable_executable(path) {
+        return;
+    }
+    let queue = root().join("queue");
     let _ = std::fs::create_dir_all(&queue);
     let job = queue.join(format!("{sha256}.job"));
     if !job.exists() {
@@ -81,6 +93,14 @@ pub fn consult(
             log::debug!("sandbox: queued {} for a run", path.display());
         }
     }
+}
+
+/// Both halves, for callers that only want the file consulted.
+pub fn consult(path: &Path, sha256: Option<&str>, assessment: &mut Assessment) -> bool {
+    if cached(path, sha256, assessment) {
+        return true;
+    }
+    enqueue(path, sha256);
     false
 }
 
@@ -124,8 +144,15 @@ fn report(text: &str, assessment: &mut Assessment) {
                 .count()
         })
         .unwrap_or(0usize);
-    let severity = if score >= 0.8 {
-        Severity::Medium
+    let convicting = score >= 0.8
+        || families.iter().any(|family| {
+            matches!(
+                family.as_str(),
+                "injection" | "defence_tampering" | "credential_access"
+            )
+        });
+    let severity = if convicting {
+        Severity::Critical
     } else {
         Severity::Low
     };

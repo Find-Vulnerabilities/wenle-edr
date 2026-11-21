@@ -679,6 +679,11 @@ impl ScanEngine {
                     }
                 }
             }
+            // The sandbox's cached opinion arrives before the verdict is
+            // computed: a convicted unpacked region, or a behaviour the
+            // sandbox rules call injection, defence tampering or credential
+            // access, is a conviction -- either side convicting is enough.
+            crate::sandbox::cached(path, digests.sha256.as_deref(), &mut assessment);
             assessment.finalize(&self.thresholds);
             // After `finalize`, and only here: the cap edits the verdict rather
             // than the score, so it needs the verdict to exist. The `Unknown`
@@ -708,15 +713,12 @@ impl ScanEngine {
             error,
             archive: archive.map(|walk| walk.summary),
         };
-        // After `finalize`, so the sandbox's opinion is visible in the report
-        // and the event stream without moving the verdict: corroborating
-        // evidence, not a conviction, in this release.
-        if report.verdict() == Verdict::Suspicious {
-            crate::sandbox::consult(
-                &report.path,
-                report.digests.sha256.as_deref(),
-                &mut report.assessment,
-            );
+        // Nothing cached and nothing decided: queue it so the next scan of
+        // these bytes has an opinion to read.
+        if report.verdict() == Verdict::Suspicious
+            && !crate::sandbox::has_result(report.digests.sha256.as_deref())
+        {
+            crate::sandbox::enqueue(&report.path, report.digests.sha256.as_deref());
         }
         report
     }
