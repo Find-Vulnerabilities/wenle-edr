@@ -256,3 +256,23 @@ JavaScript result.
 
 Honest limits: the JavaScript test is library code rather than application code;
 the Python test is 221 files; neither covers obfuscated or generated code.
+
+
+## Sandbox behaviour model, first measurement (round 61)
+
+Twelve Windows PE samples from theZoo (Tyupkin variants, Conficker, Cerber,
+Cryptowall and hash-named samples) and seventy-nine System32 executables were
+emulated with Speakeasy; none was executed. Features: per-module API counts,
+per-action ratios, unique-API count, call-sequence entropy, skipped-sleep total,
+and the analyser families. Leave-one-out:
+
+| Threshold choice | Result |
+| --- | --- |
+| zero false positives (0.9916) | miss 5/12 = 41.7% |
+| at most 10% missed (0.6261) | FP 1/79 = 1.3% |
+
+Target not met. Two causes are visible in the numbers: one benign image scores
+0.992 on its own fold, which forces the zero-FP threshold above several
+malicious samples; and twelve malicious samples are too few for leave-one-out to
+say anything stable. More malicious samples and more benign diversity are the
+next step, not a different model.
