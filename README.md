@@ -46,7 +46,39 @@ is the one reference the download cannot change.
 
 Without a database the engine still starts and finds nothing; `wenle service
 status` says so rather than calling every file clean.
-## Behaviour
+## Detection
+
+### The three models
+
+**PE model.** A LightGBM forest over 2,091 features of the file's shape: section
+layout, entropy, imports, resources, overlay and byte histogram. It runs when
+the rules convict nothing and nothing proves the file good. The conviction band
+is 0.1716 and the reporting band 0.0916, both measured on family-held-out
+splits; above the conviction band the model found 90.8% of unseen families at a
+0.1% false-positive rate. Programs with a valid signature are discounted before
+the band is applied.
+
+**Script model.** One model for every language, not one per language, and it
+decodes before it looks: BOM, UTF-8, UTF-16 and the local code page are read to
+text, so the same script in two encodings is one sample. Each language's
+spelling of an operation is replaced with one token (`iex`, `eval`,
+`WScript.Shell.Run` and `exec(` all become `<exec>`), and the text is hashed
+into character n-grams. 800 trees, 27 dense columns and the hashed grams.
+Conviction is 0.7979, the 1% false-positive point measured on 4,000 real
+JavaScript files and 2,848 machine scripts. Held-out languages at a 1% false
+positive rate: batch, JavaScript, VBScript and HTA 100%; Python 53% when the
+whole language is excluded, which is stated rather than hidden.
+
+**Behaviour story model.** The events one process produced, the last 64 of them,
+47 numbers each, scored by 500 trees. At a 0.1% per-sequence false-positive rate
+it caught 46 of 50 technique families (92%), and 48 of 50 at 1%. Its stop
+authority is on by default, and every stop goes through a guard that refuses
+protected image names (`csrss`, `lsass`, `services`, `svchost`, `explorer` and
+the rest), anything under `C:\Windows`, session-0 services and an unknown image.
+A story model cannot take the machine down with the process, which is what the
+first version of this did; the blue screen is recorded in `docs/`.
+
+### Behaviour rules
 
 68 rules over file, registry and process events. Each one scores below the
 malicious threshold on its own — that is deliberate, because a single rule is
@@ -59,6 +91,86 @@ Measured with a real WannaCry sample on 2026-11-06, in a guest, with the sample
 directory excluded from scanning so that nothing but behaviour could catch it: a
 `.WNCRY` rename, a burst of deletes and a burst of writes scored 150 together,
 and the process was stopped in the same second the first of them arrived.
+
+### Memory
+
+The service walks a process's regions and reads the private ones that are both
+readable and executable. Two things produce findings: a signature match, and a
+writable-and-executable page with no file behind it. The second is the shape of
+injected code and also of a just-in-time compiler, so it is reported, not
+convicted; a thread that begins *inside* the page is what convicts, and the
+process is stopped. A trusted signature on the image, an image under
+`C:\Windows` or Program Files, a page that holds a PE, or a process holding far
+more such pages than hand-written code does each keep the finding at report
+only. The same guard as every other stop decides whether the process may be
+stopped at all.
+
+### Archives
+
+Packages are opened and every member is judged by the same engine, both models
+included. A finding names the chain of member names it was found under, so a
+report says which file inside which folder was convicted.
+
+### AMSI
+
+The provider examines the text a script host is about to run, after the host has
+de-obfuscated it. The buffer is named as a script so the script model applies to
+it, and a conviction is what the provider answers back; a `Suspicious` verdict is
+reported and not blocked, because the product's middle band warns and never acts.
+
+## The sandbox
+
+The service does not wait for an emulation: its decisions have a 250 ms
+deadline. A scan that lands in the suspicious band writes a job file into
+`%ProgramData%\WenleAV\sandbox\queue\` and returns at once; the
+`WenleSandboxWorker` task (at startup and every five minutes, as SYSTEM) runs the
+sample under Speakeasy in `sandbox\venv`, and leaves the result at
+`sandbox\results\<sha256>.json`. The next scan of those bytes reads that file
+before the verdict is computed.
+
+What the run adds:
+
+* **a virtual clock.** `Sleep` and `NtDelayExecution` return at once but move the
+  clock forward, and `GetTickCount`, `GetTickCount64`, `timeGetTime` and
+  `QueryPerformanceCounter` all read the same clock, so a sample that sleeps and
+  measures sees the sleep it asked for. One sample in the corpus asked to sleep
+  7,180 times and saw them pass.
+* **a plausible machine.** Windows 10 build 19045, host name, workgroup, user,
+  SID, a fixed C: drive, an Ethernet adapter with a MAC and DHCP, and the
+  environment variables a Windows program reads on start.
+* **the unpacked code.** Regions Speakeasy saw written and then executed are
+  dumped and scanned by this product's own engine, which is where a packed
+  payload meets the PE model.
+* **the decisive behaviours.** A ransomware shape (`vssadmin`, `wbadmin`,
+  `bcdedit`), a credential tool, an event-log clear, or a dropped driver that is
+  started is `sandbox/decisive` and takes the quarantine path. A convicted
+  unpacked region is `sandbox/unpacked`. Other families are reported at Low.
+
+The sample is never executed on the host; the emulator reads it. Scripts are not
+emulated: `wscript.exe` does not load in Speakeasy, `cmd.exe` runs no batch and
+`powershell.exe` runs no script, so script detection stays with the script model
+and AMSI. The sandbox itself is updated from a folder or an HTTP manifest by
+`tools/sandbox_update.ps1` and the `WenleSandboxUpdate` task, with a SHA-256 per
+wheel and a version comparison.
+
+## Updates and releases
+
+The code is MIT. The releases carry the compiled products, built from the tag
+they are attached to: for every version from 1.0.1 on, the release has
+`wenle.exe`, `wenle-gui.exe`, `wenle-av-service.exe`, `av_amsi.dll`,
+`manifest.txt`, `update.lua` and a zip of the same files. 1.0.0 is marked
+pre-release: its source does not build (a module is missing), so it has no
+products and is not updatable.
+
+`wenle update fetch <manifest URL>` downloads the files a release manifest names
+over HTTPS and checks each against its SHA-256. `wenle update verify <dir>`
+checks a local package and changes nothing. `wenle update apply <dir>` verifies,
+stops the service, installs the files its manifest names (and nothing else), and
+starts it again; the order is a Lua script — `--script` names one — and the file
+operations are Rust, so a script cannot name a path. `wenle update rollback`
+puts back the files the last update replaced. A service stuck in `STOP_PENDING`
+is terminated and waited for rather than reported as an error, because the SCM
+refuses every further control in that state.
 
 ## What it costs
 
@@ -124,14 +236,21 @@ next to it. Nothing else writes outside `%ProgramData%\WenleAV`.
 
 `wenle protect status` reports all of it without changing anything.
 
-## Updates
+## Protecting the product itself
 
-`wenle update` verifies a package against a `sha256` manifest before touching
-anything, stops the service, replaces the files and starts it again. The order
-the steps happen in is a Lua script; the file operations are Rust, and the script
-cannot name a path. `wenle update rollback` puts back what the last update
-replaced, and `wenle update fetch` builds a package from a release manifest over
-HTTPS.
+The service is configured so that an ordinary process cannot disable it: its
+security descriptor allows control only to SYSTEM and Administrators, its start
+type is automatic, and the SCM restarts it five and ten seconds after a failure.
+`wenle protect manifest` records the digest of every installed file and
+`wenle protect verify` compares against that record, so a replaced binary is
+visible even when everything still runs.
+
+These are user-mode measures. A process running as an administrator can still
+terminate the service; the service comes back, but it does come back rather than
+refuse to die. Kernel-level refusal needs an object callback that strips
+`PROCESS_TERMINATE` from handles opened against the product, which is a driver
+change requiring test signing and a VM to develop against, and it is not in this
+build.
 
 ## Licensing
 
