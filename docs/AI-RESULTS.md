@@ -235,3 +235,24 @@ are counted -- zero for batch, 175 of 1,520 for JavaScript, which is the languag
 whose calibration is thinnest. VBScript and HTA have only 320 benign samples
 each and score zero, so their hundred percent is real on this corpus but leans on
 a small calibration set.
+
+
+## Real-world false positives (round 60)
+
+Thresholds calibrated on real files, measured on a disjoint half that calibration
+never saw. The earlier 10.4% figure came from calibrating on the training benign,
+whose scores are almost all zero; on real scripts the calibrated threshold is
+0.03 to 0.8 instead.
+
+| Real material | Files | FPR 1% threshold | FPR 0.1% threshold |
+| --- | --- | --- | --- |
+| JavaScript (node_modules, editor resources) | 4,000 | 0.85% | 0.05% (1/2,000) |
+| Python (working projects in Downloads) | 221 | 0.90% | 0.00% (0/111) |
+| Mixed machine scripts | 2,848 | 1.09% | 0.18% |
+
+The TypeScript files of saas-pdf were scored and returned zero, but TypeScript is
+not JavaScript and is not in the corpus, so that number is not reported as a
+JavaScript result.
+
+Honest limits: the JavaScript test is library code rather than application code;
+the Python test is 221 files; neither covers obfuscated or generated code.
