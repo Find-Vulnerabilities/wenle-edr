@@ -171,6 +171,31 @@ fn report(text: &str, assessment: &mut Assessment) {
         DetectionSource::Heuristic,
     ));
 
+    // The four behaviours the behaviour engine stops on, when the emulation
+    // reached one. Stronger than any score, and they convict.
+    let decisive: Vec<String> = value
+        .get("decisive")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !decisive.is_empty() {
+        assessment.push(Detection::new(
+            "sandbox/decisive",
+            format!(
+                "The sandbox reached a decisive behaviour: {}. The driver's own \
+                 detectors stop on these, and so does this.",
+                decisive.join(", ")
+            ),
+            Severity::Critical,
+            DetectionSource::Heuristic,
+        ));
+    }
+
     // The unpacked regions the sandbox produced were judged by this product's
     // own engine while it ran; a conviction there is a static finding about
     // content that exists only after the packer ran. It is a separate detection

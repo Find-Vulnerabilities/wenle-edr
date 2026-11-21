@@ -181,12 +181,13 @@ def main():
     unpacked = dump_regions(report, args.out)
     scanned = scan_with_product(unpacked, args.scanner)
 
-    score, findings = analyse(report)
+    score, findings, decisive = analyse(report)
     summary = {
         "sample": os.path.abspath(args.sample),
         "sha256": report.get("sha256"),
         "score": round(score, 3),
         "findings": findings,
+        "decisive": decisive,
         "clock": {
             "virtual_ms": clock.now_ms(),
             "skipped_sleeps": len(skipped),

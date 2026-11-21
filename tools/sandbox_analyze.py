@@ -113,7 +113,50 @@ def analyse(report):
     # Three weak families together are stronger than any one of them.
     if len(findings) >= 3:
         score = min(1.0, score + 0.1)
-    return score, findings
+
+    decisive = decisive_behaviours(report)
+    return score, findings, decisive
+
+
+def argument_text(event):
+    """Every argument value of one API call, joined for pattern matching."""
+    parts = []
+    for argument in event.get("args") or []:
+        value = argument.get("value")
+        display = argument.get("display")
+        for candidate in (display, value):
+            if isinstance(candidate, str):
+                parts.append(candidate)
+    return " ".join(parts).lower()
+
+
+def decisive_behaviours(report):
+    """The four behaviours this product stops on, seen in an emulation.
+
+    These are the decisive detectors the behaviour engine already trusts on the
+    driver: a ransomware shape, a known driver-loading tool, a credential tool,
+    and an event-log clear. A sandbox run that reaches one of them is stronger
+    evidence than any score, and it convicts.
+    """
+    hits = []
+    for event in events_of(report):
+        api = (event.get("api_name") or "").lower()
+        text = argument_text(event)
+        both = api + " " + text
+        if any(word in both for word in ("vssadmin", "delete shadows", "wbadmin", "bcdedit")):
+            hits.append("ransomware-shape")
+        if any(word in both for word in ("lsass", "mimikatz", "sekurlsa", "credential")):
+            hits.append("credential-tool")
+        if any(word in both for word in ("wevtutil", "cleareventlog", "clear-eventlog")):
+            hits.append("event-log-clear")
+        if ".sys" in both and any(word in both for word in ("createservice", "startservice", "ntloaddriver")):
+            hits.append("byovd-driver")
+    # Same order, no duplicates.
+    result = []
+    for hit in hits:
+        if hit not in result:
+            result.append(hit)
+    return result
 
 
 def main():
@@ -124,12 +167,13 @@ def main():
 
     with open(args.report, encoding="utf-8") as handle:
         report = json.load(handle)
-    score, findings = analyse(report)
+    score, findings, decisive = analyse(report)
     document = {
         "sample": report.get("path"),
         "sha256": report.get("sha256"),
         "score": round(score, 3),
         "findings": findings,
+        "decisive": decisive,
     }
     if args.out:
         with open(args.out, "w", encoding="utf-8") as handle:
