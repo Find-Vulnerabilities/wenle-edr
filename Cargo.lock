@@ -816,6 +816,7 @@ dependencies = [
  "av-signatures",
  "log",
  "serde",
+ "serde_json",
  "tempfile",
 ]
 

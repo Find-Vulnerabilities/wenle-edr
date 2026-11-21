@@ -58,6 +58,7 @@ pub mod heuristics;
 pub mod kind;
 pub mod own;
 pub mod rules;
+pub mod sandbox;
 pub mod script;
 pub mod script_model;
 pub mod trust;

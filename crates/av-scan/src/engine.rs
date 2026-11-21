@@ -63,6 +63,7 @@ use std::time::Instant;
 
 use av_core::{
     Assessment, Detection, DetectionSource, Digests, FileScanReport, HashKind, Hasher, ScanFailure,
+    Verdict,
     ScanOptions, Severity, VerdictThresholds,
 };
 use av_rules::database::RuleDatabase;
@@ -695,7 +696,7 @@ impl ScanEngine {
             None
         };
 
-        FileScanReport {
+        let mut report = FileScanReport {
             path: path.to_path_buf(),
             kind,
             size,
@@ -706,7 +707,18 @@ impl ScanEngine {
             from_cache: false,
             error,
             archive: archive.map(|walk| walk.summary),
+        };
+        // After `finalize`, so the sandbox's opinion is visible in the report
+        // and the event stream without moving the verdict: corroborating
+        // evidence, not a conviction, in this release.
+        if report.verdict() == Verdict::Suspicious {
+            crate::sandbox::consult(
+                &report.path,
+                report.digests.sha256.as_deref(),
+                &mut report.assessment,
+            );
         }
+        report
     }
 
     /// Scan a buffer, building a scanner for the occasion.
