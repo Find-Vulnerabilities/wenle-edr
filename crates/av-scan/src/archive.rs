@@ -36,7 +36,7 @@
 //! caller decide what to say about it.
 
 use av_archive::{ArchiveFormat, Container, ExpansionBudget};
-use av_core::{ArchiveSummary, Detection, ScanOptions, Severity, SkipReason};
+use av_core::{ArchiveSummary, Detection, DetectionSource, ScanOptions, Severity, SkipReason};
 use av_rules::scanner::ScanOutcome;
 use av_rules::vm::{Input, PeInput};
 
@@ -370,6 +370,76 @@ impl Walk<'_, '_, '_> {
                 crate::heuristics::evaluate(data, image.as_ref(), self.engine.heuristics())
             {
                 self.detections.push(detection.within(chain));
+            }
+        }
+
+        // The models see members too. A packed executable inside a zip used to
+        // be judged by the rules and the heuristics and by neither model, which
+        // left the member of a container weaker than the same file standing
+        // alone. The member's bytes are the whole member, not a prefix, so the
+        // score is the score the file would get on disk.
+        if let Some(score) = crate::ai::score(data) {
+            if score >= crate::ai::MALICIOUS_THRESHOLD {
+                self.detections.push(
+                    Detection::new(
+                        "ai/static-model",
+                        format!(
+                            "A member's shape scores {score:.2} of 1 on the static model, above                              the conviction band at {:.2}.",
+                            crate::ai::MALICIOUS_THRESHOLD
+                        ),
+                        Severity::Critical,
+                        DetectionSource::Heuristic,
+                    )
+                    .within(chain),
+                );
+            } else if score >= crate::ai::SUSPICIOUS_THRESHOLD {
+                self.detections.push(
+                    Detection::new(
+                        "ai/static-model",
+                        format!(
+                            "A member's shape scores {score:.2} of 1 on the static model, between                              the reporting band at {:.2} and the conviction band at {:.2}.",
+                            crate::ai::SUSPICIOUS_THRESHOLD,
+                            crate::ai::MALICIOUS_THRESHOLD
+                        ),
+                        Severity::Low,
+                        DetectionSource::Heuristic,
+                    )
+                    .within(chain),
+                );
+            }
+        }
+        if crate::script_model::is_script(Some(std::path::Path::new(chain))) {
+            if let Some(score) = crate::script_model::score(data) {
+                if score >= crate::script_model::MALICIOUS_THRESHOLD {
+                    self.detections.push(
+                        Detection::new(
+                            "ai/script-model",
+                            format!(
+                                "A member's text scores {score:.2} of 1 on the script model, above \
+                                 the conviction band at {:.2}.",
+                                crate::script_model::MALICIOUS_THRESHOLD
+                            ),
+                            Severity::Critical,
+                            DetectionSource::Heuristic,
+                        )
+                        .within(chain),
+                    );
+                } else if score >= crate::script_model::SUSPICIOUS_THRESHOLD {
+                    self.detections.push(
+                        Detection::new(
+                            "ai/script-model",
+                            format!(
+                                "A member's text scores {score:.2} of 1 on the script model, between \
+                                 the reporting band at {:.2} and the conviction band at {:.2}.",
+                                crate::script_model::SUSPICIOUS_THRESHOLD,
+                                crate::script_model::MALICIOUS_THRESHOLD
+                            ),
+                            Severity::Low,
+                            DetectionSource::Heuristic,
+                        )
+                        .within(chain),
+                    );
+                }
             }
         }
     }
