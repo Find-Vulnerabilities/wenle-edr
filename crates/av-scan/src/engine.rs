@@ -182,6 +182,13 @@ pub struct ScanEngine {
     /// is the only part of a scan with evidence about provenance — see
     /// [`mod@crate::own`] for the measurement that put it here.
     own: OwnFiles,
+    /// Digests already computed for a file, keyed by path and by the size and
+    /// modification time that say the bytes are the ones the digests describe.
+    /// Hashing is whole-file work, and a gate that rescans a path a program
+    /// keeps touching was doing it again for an unchanged file.
+    digest_cache: std::sync::Mutex<
+        std::collections::HashMap<std::path::PathBuf, (u64, std::time::SystemTime, Digests)>,
+    >,
 }
 
 impl ScanEngine {
@@ -216,6 +223,7 @@ impl ScanEngine {
             digests: DigestPolicy::Needed,
             catalog: None,
             own,
+            digest_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -323,7 +331,37 @@ impl ScanEngine {
         // Digests are taken over the whole file, before any size cap applies. A
         // blocklist hash names a file, and a digest of the first 256 MiB of a
         // 300 MiB file is a digest of nothing.
-        let digests = self.digests.compute(data, &self.blocklist);
+        //
+        // The cache answers only when the size and the modification time are
+        // the ones recorded beside the digests: same path is not the same bytes.
+        let identity = std::fs::metadata(path)
+            .ok()
+            .and_then(|metadata| metadata.modified().ok().map(|modified| (metadata.len(), modified)));
+        let mut digests = None;
+        if let Some((size, modified)) = identity {
+            if let Ok(cache) = self.digest_cache.lock() {
+                if let Some((cached_size, cached_modified, cached)) = cache.get(path) {
+                    if *cached_size == size && *cached_modified == modified {
+                        digests = Some(cached.clone());
+                    }
+                }
+            }
+        }
+        let digests = match digests {
+            Some(digests) => digests,
+            None => {
+                let computed = self.digests.compute(data, &self.blocklist);
+                if let Some((size, modified)) = identity {
+                    if let Ok(mut cache) = self.digest_cache.lock() {
+                        if cache.len() >= 8192 {
+                            cache.clear();
+                        }
+                        cache.insert(path.to_path_buf(), (size, modified, computed.clone()));
+                    }
+                }
+                computed
+            }
+        };
         self.scan_prepared(scanner, path, data, data.len() as u64, digests, options, started)
     }
 
