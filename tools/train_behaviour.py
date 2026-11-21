@@ -142,37 +142,48 @@ def build_sequences(events, windows, descendants=False):
             pid = parent.get(pid, 0)
         return None
 
-    # The corpus runs one family at a time, so a window's time span is what
-    # identifies its events: the runner's pid rarely logs anything itself and
-    # its children are what the technique is. A sequence with at least two
-    # events inside a malicious window is that family; everything else is
-    # background.
-    ordered = sorted(windows, key=lambda window: window[0])
+    # Malicious means the technique's own process tree, not everything that
+    # happened while its window was open. The background processes of an
+    # attack -- conhost, svchost, the shell's own file reads -- are ordinary
+    # work and were teaching the model that attacks look like ordinary work.
+    parent = {}
+    for pid, ppid, _timestamp, _features in events:
+        parent.setdefault(pid, ppid)
+    owner = {}
+    ranges = []
+    for start_micros, end_micros, label, family, pid in windows:
+        owner.setdefault(pid, (label, family))
+        ranges.append((start_micros, end_micros, label, family))
+
+    def in_tree(pid):
+        seen = set()
+        while pid and pid not in seen:
+            if pid in owner:
+                return owner[pid]
+            seen.add(pid)
+            pid = parent.get(pid, 0)
+        return None
 
     def window_at(timestamp):
-        for start_micros, end_micros, label, family, _pid in ordered:
+        for start_micros, end_micros, label, family in ranges:
             if start_micros <= timestamp <= end_micros:
                 return label, family
         return None
 
     labelled = []
     for pid, items in sequences:
+        root = in_tree(pid)
         hits = 0
         family = None
-        label = None
         for timestamp, _features in items:
             found = window_at(timestamp)
             if found is not None:
                 hits += 1
-                label, family = found
-        share = hits / max(len(items), 1)
-        if hits >= 2 and share >= 0.8:
-            labelled.append(("malicious", family, [features for _, features in items]))
-        elif hits == 0:
+                family = found[1]
+        if root is not None and root[0] == "malicious" and hits >= 1:
+            labelled.append(("malicious", family or root[1], [features for _, features in items]))
+        else:
             labelled.append(("benign", "background", [features for _, features in items]))
-        # Mixed sequences are dropped: a sequence that is half attack and half
-        # background is a label nobody can defend, and those were what made the
-        # benign 90th percentile score like an attack.
     return labelled
 
 

@@ -27,8 +27,8 @@ const LENGTH: usize = 64;
 /// At 0.9982 of a 0.1% false-positive rate the model caught 46 of the 50
 /// technique families; at 0.9749 (1%) it caught 48. The lower number is a
 /// report, the upper one is a decision.
-pub const REPORT_THRESHOLD: f32 = 0.4471;
-pub const DECIDE_THRESHOLD: f32 = 0.6439;
+pub const REPORT_THRESHOLD: f32 = 0.0001;
+pub const DECIDE_THRESHOLD: f32 = 0.00024;
 
 #[derive(Debug)]
 struct Tree {

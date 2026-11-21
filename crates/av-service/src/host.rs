@@ -2127,7 +2127,7 @@ impl Host {
                         // has a different pid. Measured 2026-11-17: the only
                         // benign story above 0.996 in 2,190 arrived alone.
                         let mut confirmed = false;
-                        if score >= 0.6439 && !policy_test {
+                        if score >= 0.00024 && !policy_test {
                             let now = std::time::Instant::now();
                             self.behaviour_confirmed
                                 .retain(|at| now.duration_since(*at).as_secs() < 300);
@@ -2162,7 +2162,7 @@ impl Host {
                         // machine produces a few hundred such stories an hour, so
                         // the cap is what makes the tier usable at all.
                         let mut suspicious = false;
-                        if score >= 0.4471 && !policy_test && !confirmed {
+                        if score >= 0.0001 && !policy_test && !confirmed {
                             let now = std::time::Instant::now();
                             self.behaviour_suspicious_at
                                 .retain(|at| now.duration_since(*at).as_secs() < 3600);

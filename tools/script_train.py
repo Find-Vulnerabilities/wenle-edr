@@ -120,10 +120,10 @@ def vectorize(rows):
     return sparse.hstack([sparse.csr_matrix(dense), hashed]).tocsr()
 
 
-def evaluate(name, matrix, labels, languages, train_mask, test_mask, trees=400):
+def evaluate(name, matrix, labels, languages, train_mask, test_mask, trees=800):
     model = lgb.LGBMClassifier(
         objective="binary", n_estimators=trees, learning_rate=0.05,
-        num_leaves=63, min_child_samples=10, feature_fraction=0.3,
+        num_leaves=127, min_child_samples=10, feature_fraction=0.3,
         bagging_fraction=0.8, bagging_freq=1, n_jobs=6, random_state=11, verbose=-1,
     )
     model.fit(matrix[train_mask], labels[train_mask])

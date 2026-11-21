@@ -47,7 +47,7 @@ _KEEP = {name.strip() for name in _os.environ.get("WENLE_SEMANTIC", "").split(",
 SEMANTIC = [
     ("exec", ["iex", "invoke-expression", "eval", "exec(", "wscript.shell", "run(",
               "system(", "shell_exec", "passthru", "os.execute", "exec.command",
-              "runtime.exec", "subprocess.run", "subprocess.call", "popen",
+              "runtime.exec", "subprocess.run", "subprocess.call", "popen", "socket.socket", "dup2(", "ctypes.windll", "os.startfile", "os.chmod", "os.walk", "shutil.copy",
               "start-process", "shell.application", "call ", "& ", "|iex",
               "powershell", "cmd /c", "start \"\"", "start "]),
     ("decode", ["frombase64string", "convert]::frombase64", "base64.b64decode",
@@ -208,6 +208,10 @@ def features(data: bytes):
     # a batch file be recognised by a model trained on PowerShell. Replacing the
     # text with only the canonical view cost the Python held-out split twenty
     # points; keeping both keeps both.
+    import os as _os
+    view = _os.environ.get("WENLE_VIEW", "both")
+    if view == "canonical":
+        return dense, ngram_hashes(text, canonical=True)
     grams = dict(ngram_hashes(text, canonical=False))
     for index, count in ngram_hashes(text, canonical=True).items():
         grams[index + (1 << 16)] = grams.get(index + (1 << 16), 0) + count

@@ -188,3 +188,50 @@ rate a product can carry.
 Model: LightGBM over the flattened 64x47 sequence (3,008 features), 255 leaves,
 800 trees, threshold from the benign distribution. The GRU was measured at 77.6%
 family recall at 1% and 26.5% at 0.1% on the same corpus.
+
+
+## Script model, restored corpus (round 57)
+
+After Defender removed about 600 synthetic malicious files and the corpus was
+regenerated, the best configuration is the dual view (raw and canonical n-grams),
+320 samples per language, 1,200 benign files per extension, 800 trees and 127
+leaves:
+
+| Split | FPR 1% | FPR 0.1% | FPR 0.01% |
+| --- | --- | --- | --- |
+| Random | 99.9% | 99.7% | 99.3% |
+| Batch held out | 92.4% | 83.1% | 83.1% |
+| Python held out | 73.1% | 58.4% | 58.4% |
+
+Batch held out meets the ten percent miss line at a 1% false-positive rate
+(7.6% miss). Python does not: its seven templates map to the canonical
+operations, but a language with that few shapes is not learned from the others.
+Canonical-only features made both worse (batch 90.3%, Python 53.2%), so the dual
+view stays.
+
+
+## Final cross-language table (round 58)
+
+Each row trains on every other language and tests on the one named, with the
+threshold set from that language's own benign scripts at the stated
+false-positive rate. Benign calibration is 600 files per extension.
+
+| Language held out | Attack files | Recall @1% FPR | Recall @0.1% FPR |
+| --- | --- | --- | --- |
+| Batch (.bat/.cmd) | 361 | 100% | 78.4% |
+| JavaScript | 247 | 100% | 100% |
+| VBScript | 182 | 100% | 100% |
+| HTA | 103 | 100% | 100% |
+| Python | 284 | 53.2% | 53.2% |
+| PowerShell | 3,186 | 6.2% | 4.6% |
+
+PowerShell's row is not a language test: the real malicious corpus (5,584
+parquet scripts) is PowerShell, so holding it out removes most of the malicious
+training data. Python remains the honest gap.
+
+Verification of the hundred-percent rows: the thresholds are the 99th percentile
+of benign scores (batch 0.018, JavaScript 0.991), and the benign files above 0.5
+are counted -- zero for batch, 175 of 1,520 for JavaScript, which is the language
+whose calibration is thinnest. VBScript and HTA have only 320 benign samples
+each and score zero, so their hundred percent is real on this corpus but leans on
+a small calibration set.
