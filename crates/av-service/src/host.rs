@@ -3080,10 +3080,16 @@ impl Host {
     /// report — see [`Request::ScanBuffer`] for why it is not trusted.
     fn scan_buffer(&mut self, name: &str, data: &[u8]) -> (Reply, Vec<Event>) {
         let options = engine::options_from(&self.loaded.config.scanning);
-        let report = self
-            .engine
-            .engine
-            .scan_bytes(Path::new(name), data, &options);
+        // AMSI hands over the text of a script, and the name it gives often has
+        // no extension: a command line, a module name, an empty string. The
+        // engine classifies and gates by extension, so a script arriving that
+        // way used to get the rules and the heuristics and neither model. The
+        // content is known to be script, so say so with the name.
+        let mut path = Path::new(name).to_path_buf();
+        if path.extension().is_none() {
+            path.set_extension("ps1");
+        }
+        let report = self.engine.engine.scan_bytes(&path, data, &options);
         // What an AMSI host was told, and the only record of content that was
         // examined before it ran. Without this line a provider that answers
         // "no opinion" and a provider that was never called look the same.
