@@ -29,6 +29,30 @@ pub struct StaticModel {
 }
 
 impl StaticModel {
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        let mut offset = 0usize;
+        if read_u32(bytes, &mut offset)? != MAGIC {
+            return None;
+        }
+        let trees = read_u32(bytes, &mut offset)? as usize;
+        let _features = read_u32(bytes, &mut offset)? as usize;
+        let mut forest = Vec::with_capacity(trees);
+        for _ in 0..trees {
+            let leaves = read_u32(bytes, &mut offset)? as usize;
+            if leaves == 0 {
+                return None;
+            }
+            let splits = leaves - 1;
+            let split = read_i32s(bytes, &mut offset, splits)?;
+            let threshold = read_f32s(bytes, &mut offset, splits)?;
+            let left = read_i32s(bytes, &mut offset, splits)?;
+            let right = read_i32s(bytes, &mut offset, splits)?;
+            let leaf = read_f32s(bytes, &mut offset, leaves)?;
+            forest.push(Tree { split, threshold, left, right, leaf });
+        }
+        Some(Self { trees: forest })
+    }
+
     pub fn load() -> Option<Self> {
         let mut offset = 0usize;
         if read_u32(MODEL, &mut offset)? != MAGIC {

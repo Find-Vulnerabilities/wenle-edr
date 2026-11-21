@@ -31,12 +31,17 @@ ROOTS = [
 ]
 
 
-def collect(limit=4000, max_size=300_000):
+def collect(root=None, limit=4000, max_size=300_000):
     found = []
-    for root in ROOTS:
+    for base in ([root] if root else ROOTS):
+        root = base
         if not os.path.isdir(root):
             continue
         for current, directories, files in os.walk(root):
+            lower = current.lower()
+            if any(skip in lower for skip in ("script-ai", "ember", "wenle", "\\samples\\")):
+                directories[:] = []
+                continue
             for name in files:
                 if os.path.splitext(name)[1].lower() not in EXTENSIONS:
                     continue
@@ -58,6 +63,7 @@ def collect(limit=4000, max_size=300_000):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--scripts", required=True)
+    parser.add_argument("--root", default=None)
     parser.add_argument("--malicious-limit", type=int, default=3000)
     parser.add_argument("--benign-per-extension", type=int, default=600)
     args = parser.parse_args()
@@ -77,7 +83,7 @@ def main():
     )
     model.fit(matrix, labels)
 
-    paths = collect()
+    paths = collect(args.root)
     print("real javascript files:", len(paths), flush=True)
     data = []
     kept = []

@@ -642,6 +642,42 @@ impl ScanEngine {
                     }
                 }
             }
+            // The language-agnostic script model. It runs only for script
+            // files, only when nothing above convicted, and on the same
+            // examined prefix the heuristic reader used. A conviction here
+            // takes the ordinary quarantine path: the model's 0.7979 is the
+            // 1% real-script false-positive point, measured on 4,000 real
+            // JavaScript files and 2,848 machine scripts.
+            if assessment.detections.is_empty() && crate::script_model::is_script(Some(path)) {
+                if let Some(score) = crate::script_model::score(examined) {
+                    if score >= crate::script_model::MALICIOUS_THRESHOLD {
+                        assessment.push(Detection::new(
+                            "ai/script-model",
+                            format!(
+                                "The script model scores this text {score:.2} of 1. It flagged \
+                                 five in ten thousand real JavaScript files and twelve in ten \
+                                 thousand machine scripts at this band, and caught every held-out \
+                                 batch, JavaScript, VBScript and HTA shape above {:.2}.",
+                                crate::script_model::MALICIOUS_THRESHOLD,
+                            ),
+                            Severity::Critical,
+                            DetectionSource::Heuristic,
+                        ));
+                    } else if score >= crate::script_model::SUSPICIOUS_THRESHOLD {
+                        assessment.push(Detection::new(
+                            "ai/script-model",
+                            format!(
+                                "The script model scores this text {score:.2} of 1, between the \
+                                 reporting band at {:.2} and the conviction band at {:.2}.",
+                                crate::script_model::SUSPICIOUS_THRESHOLD,
+                                crate::script_model::MALICIOUS_THRESHOLD,
+                            ),
+                            Severity::Low,
+                            DetectionSource::Heuristic,
+                        ));
+                    }
+                }
+            }
             assessment.finalize(&self.thresholds);
             // After `finalize`, and only here: the cap edits the verdict rather
             // than the score, so it needs the verdict to exist. The `Unknown`

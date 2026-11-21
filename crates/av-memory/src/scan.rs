@@ -62,7 +62,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use av_core::{Detection, DetectionSource, FileScanReport, ScanOptions, Verdict};
+use av_core::{Detection, DetectionSource, FileScanReport, ScanOptions, Severity, Verdict};
 use av_scan::ScanEngine;
 use serde::{Deserialize, Serialize};
 
@@ -432,6 +432,10 @@ pub struct ProcessOutcome {
     pub bytes_unread: u64,
     /// The refused reads, listed up to [`MAX_UNREADABLE_LISTED`].
     pub unreadable: UnreadableRegionList,
+    /// How many writable-and-executable regions this scan has reported as a
+    /// heuristic. Capped by the caller so one JIT-heavy process cannot fill
+    /// the report with pages that are ordinary runtime behaviour.
+    rwx_reported: u64,
     /// The regions that produced a detection.
     pub findings: Vec<MemoryFinding>,
 }
@@ -453,6 +457,7 @@ impl Default for ProcessOutcome {
             bytes_read: 0,
             bytes_unread: 0,
             unreadable: UnreadableRegionList::default(),
+            rwx_reported: 0,
             findings: Vec::new(),
         }
     }
@@ -1154,6 +1159,101 @@ impl<'a> MemoryScanner<'a> {
     }
 }
 
+
+
+/// Images whose ordinary work is writable executable memory.
+///
+/// Every browser, Electron application, .NET host and Java runtime allocates
+/// executable pages for its just-in-time compiler. Reporting those would bury
+/// the one page that matters, so the heuristic stays silent for them; a named
+/// process outside this list is still reported.
+const JIT_HOSTS: [&str; 18] = [
+    "chrome.exe",
+    "msedge.exe",
+    "msedgewebview2.exe",
+    "firefox.exe",
+    "electron.exe",
+    "node.exe",
+    "java.exe",
+    "javaw.exe",
+    "dotnet.exe",
+    "msbuild.exe",
+    "devenv.exe",
+    "code.exe",
+    "code-insiders.exe",
+    "teams.exe",
+    "ms-teams.exe",
+    "slack.exe",
+    "discord.exe",
+    "w3wp.exe",
+];
+
+fn jit_host(process: &ProcessRef) -> bool {
+    let Some(name) = process.name.as_deref() else {
+        return false;
+    };
+    JIT_HOSTS.iter().any(|known| known.eq_ignore_ascii_case(name))
+}
+/// Where this process's threads begin, as far as the kernel will say.
+///
+/// Only the writable-executable heuristic calls it: a page a thread starts in
+/// is not a just-in-time page. A refusal is an empty list, because the answer
+/// then is unknown rather than suspicious.
+#[cfg(windows)]
+fn thread_starts(pid: u32) -> Vec<usize> {
+    let mut addresses = Vec::new();
+    // SAFETY: a thread snapshot, a stack entry and a query whose out-parameter
+    // is a local; every handle is closed on the path that opened it.
+    unsafe {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD,
+            THREADENTRY32,
+        };
+        use windows::Wdk::System::Threading::{NtQueryInformationThread, THREADINFOCLASS};
+        use windows::Win32::System::Threading::{OpenThread, THREAD_QUERY_INFORMATION};
+        let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) else {
+            return addresses;
+        };
+        let mut entry = THREADENTRY32 {
+            dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
+            ..Default::default()
+        };
+        if Thread32First(snapshot, &mut entry).is_ok() {
+            loop {
+                if entry.th32OwnerProcessID == pid {
+                    if let Ok(thread) =
+                        OpenThread(THREAD_QUERY_INFORMATION, false, entry.th32ThreadID)
+                    {
+                        let mut start: usize = 0;
+                        let mut returned = 0u32;
+                        let status = NtQueryInformationThread(
+                            thread,
+                            THREADINFOCLASS(9),
+                            &mut start as *mut usize as *mut _,
+                            std::mem::size_of::<usize>() as u32,
+                            &mut returned,
+                        );
+                        if status.is_ok() {
+                            addresses.push(start);
+                        }
+                        let _ = CloseHandle(thread);
+                    }
+                }
+                if Thread32Next(snapshot, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = CloseHandle(snapshot);
+    }
+    addresses
+}
+
+#[cfg(not(windows))]
+fn thread_starts() -> Vec<usize> {
+    Vec::new()
+}
 /// One region the scanner read, and everything it established about where the
 /// bytes in it came from.
 ///
@@ -1203,19 +1303,60 @@ impl ProcessOutcome {
             self.regions_unknown = self.regions_unknown.saturating_add(1);
             return;
         }
-        if !report.verdict().is_detection() {
-            // Read, judged, and nothing found. This is the answer the whole
-            // scan exists to be able to give, and it is only ever given when
-            // the read succeeded.
-            return;
-        }
-
-        let detections: Vec<Detection> = report
+        let mut detections: Vec<Detection> = report
             .assessment
             .detections
             .iter()
             .map(|detection| attribute(detection, container))
             .collect();
+
+        // The unbacked writable-and-executable page: private memory, no file
+        // behind it, and both writable and executable at once. That is where
+        // injected code lives, and it is also where a JIT lives. A thread that
+        // begins inside the page is what tells the two apart: injected code
+        // starts executing there, a JIT's worker threads start in ntdll.
+        if detections.is_empty()
+            && interest == Interest::WritableCode
+            && self.rwx_reported < 3
+            && !jit_host(&self.process)
+            && self.process.pid != std::process::id()
+        {
+            self.rwx_reported += 1;
+            let started_here = thread_starts(self.process.pid)
+                .iter()
+                .any(|address| *address >= region.base && *address < region.base + region.size);
+            let (id, severity, sentence) = if started_here {
+                (
+                    "memory/private-rwx-thread",
+                    Severity::Critical,
+                    "A thread begins in it, which is what injected code does and what a just-in-time compiler does not.",
+                )
+            } else {
+                (
+                    "memory/private-rwx",
+                    Severity::High,
+                    "No thread begins in it, so it is reported and not convicted.",
+                )
+            };
+            detections.push(attribute(
+                &Detection::new(
+                    id,
+                    format!(
+                        "A private region of {} bytes at 0x{:x} is both writable and executable with no file behind it. {sentence}",
+                        region.size, region.base
+                    ),
+                    severity,
+                    DetectionSource::Memory,
+                ),
+                container,
+            ));
+        }
+        if detections.is_empty() {
+            // Read, judged, and nothing found. This is the answer the whole
+            // scan exists to be able to give, and it is only ever given when
+            // the read succeeded.
+            return;
+        }
 
         self.findings.push(MemoryFinding {
             process: self.process.clone(),

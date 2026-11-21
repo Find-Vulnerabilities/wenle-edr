@@ -70,4 +70,7 @@ windows = { version = "0.62", features = [
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_Storage_FileSystem",
+    # NtQueryInformationThread lives in the WDK namespace in this windows
+    # version; it is how a thread's first instruction is learned.
+    "Wdk_System_Threading",
 ] }
