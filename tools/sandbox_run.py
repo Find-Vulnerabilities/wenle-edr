@@ -158,6 +158,7 @@ def main():
             "os_ver": {"name": "windows", "major": 10, "minor": 0, "build": 19045},
             "hostname": "DESKTOP-7K2Q4L",
             "domain": "WORKGROUP",
+            "drives": [{"root_path": "C:", "drive_type": "DRIVE_FIXED"}],
         },
         "user": {
             "name": "wensz",
@@ -166,6 +167,27 @@ def main():
         },
         "process": {
             "current_dir": r"C:\Users\wensz\Desktop",
+            "env": {
+                "USERNAME": "wensz",
+                "USERPROFILE": r"C:\Users\wensz",
+                "COMPUTERNAME": "DESKTOP-7K2Q4L",
+                "HOMEDRIVE": "C:",
+                "HOMEPATH": r"\Users\wensz",
+                "TEMP": r"C:\Users\wensz\AppData\Local\Temp",
+                "OS": "Windows_NT",
+                "PROCESSOR_ARCHITECTURE": "AMD64",
+            },
+        },
+        "network": {
+            "adapters": [{
+                "name": "Ethernet",
+                "description": "Intel(R) Ethernet Connection I219-V",
+                "mac_address": "00-1C-42-7A-3F-91-D4",
+                "type": "ethernet",
+                "ip_address": "192.168.1.42",
+                "subnet_mask": "255.255.255.0",
+                "dhcp_enabled": True,
+            }],
         },
     }
     emulator = speakeasy.Speakeasy(config=config)
