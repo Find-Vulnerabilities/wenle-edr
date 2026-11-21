@@ -702,9 +702,26 @@ pub fn stop_and_wait(timeout: std::time::Duration) -> Result<StopOutcome, Servic
             }
         }
     }
+    // The service would not stop. That state is not harmless: the SCM refuses
+    // every further control with error 1061 while it is STOP_PENDING, so the
+    // updater can neither replace the binary nor ask again. Terminating the
+    // process is the recovery the SCM cannot perform for itself; the service is
+    // then stopped and the update can proceed.
+    let _ = std::process::Command::new("taskkill")
+        .args(["/F", "/IM", "wenle-av-service.exe"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    let forced = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < forced {
+        match state()? {
+            ScmState::Stopped | ScmState::NotInstalled => return Ok(outcome),
+            _ => std::thread::sleep(std::time::Duration::from_millis(100)),
+        }
+    }
     Err(ServiceError::Scm {
         message: format!(
-            "{SERVICE_NAME} did not stop within {} seconds",
+            "{SERVICE_NAME} did not stop within {} seconds, and could not be terminated",
             timeout.as_secs()
         ),
     })
