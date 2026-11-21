@@ -421,13 +421,22 @@ impl ScanEngine {
         // A compiled rule database is made of the strings its rules search for.
         // Scanning one reports the corpus a database describes as the malware it
         // describes, and on 2026-11-21 the product quarantined a database it had
-        // just built for exactly that reason. `.avdb` is this product's
-        // container; no other kind of file uses it.
-        if blocked.is_none()
-            && path
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("avdb"))
-        {
+        // just built for exactly that reason.
+        //
+        // The name alone would be a way round the scanner: rename a sample to
+        // `.avdb` and it is never examined. So the container has to prove it is
+        // the container -- the magic and the format version this build writes --
+        // before it is declined. A file that does not carry both is scanned like
+        // anything else.
+        const AVDB_MAGIC: &[u8; 8] = b"WENLEAV\0";
+        const AVDB_VERSION: u32 = 12;
+        let is_database = path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("avdb"))
+            && data.len() >= 12
+            && &data[..8] == AVDB_MAGIC
+            && u32::from_le_bytes([data[8], data[9], data[10], data[11]]) == AVDB_VERSION;
+        if blocked.is_none() && is_database {
             return self.declined_report(
                 path,
                 data,
