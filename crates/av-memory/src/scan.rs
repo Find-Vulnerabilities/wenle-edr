@@ -432,6 +432,15 @@ pub struct ProcessOutcome {
     pub bytes_unread: u64,
     /// The refused reads, listed up to [`MAX_UNREADABLE_LISTED`].
     pub unreadable: UnreadableRegionList,
+    /// True when the process image carries a trusted signature. A signed
+    /// image is where a great deal of ordinary just-in-time work happens, and
+    /// it is never convictable by this heuristic.
+    image_trusted: bool,
+    /// True when the image lives under C:\Windows or Program Files.
+    under_system: bool,
+    /// True when the walk found more writable-executable regions than any
+    /// hand-written program needs, which is what a JIT host looks like.
+    rwx_heavy: bool,
     /// How many writable-and-executable regions this scan has reported as a
     /// heuristic. Capped by the caller so one JIT-heavy process cannot fill
     /// the report with pages that are ordinary runtime behaviour.
@@ -457,6 +466,9 @@ impl Default for ProcessOutcome {
             bytes_read: 0,
             bytes_unread: 0,
             unreadable: UnreadableRegionList::default(),
+            image_trusted: false,
+            under_system: false,
+            rwx_heavy: false,
             rwx_reported: 0,
             findings: Vec::new(),
         }
@@ -1024,6 +1036,36 @@ impl<'a> MemoryScanner<'a> {
         let mut outcome = ProcessOutcome::new(process.clone());
         outcome.walk_complete = walk.complete;
         outcome.regions_seen = walk.regions.len() as u64;
+        // Three facts about the process, asked once rather than per region:
+        // whether its image is signed, whether it lives among the system's own
+        // programs, and whether it holds far more writable-executable pages
+        // than hand-written code does. Each is a reason to report and not
+        // convict, and together they are what keeps JITs out of the findings.
+        outcome.under_system = process
+            .image
+            .as_deref()
+            .map(|path| {
+                let lower = path.to_string_lossy().to_ascii_lowercase();
+                lower.starts_with("c:\\windows\\") || lower.contains("\\program files")
+            })
+            .unwrap_or(false);
+        outcome.image_trusted = process
+            .image
+            .as_deref()
+            .and_then(|path| std::fs::read(path).ok())
+            .map(|data| av_authenticode::verify_bytes(&data).is_trusted())
+            .unwrap_or(false);
+        outcome.rwx_heavy = walk
+            .regions
+            .iter()
+            .filter(|region| {
+                matches!(
+                    classify(region, self.config.min_region_bytes),
+                    RegionInterest::Interesting(Interest::WritableCode)
+                )
+            })
+            .count()
+            > 4;
         let mut budget = self.config.max_total_bytes;
         // One scanner for the whole process, not one per region. Building one
         // allocates the rule engine's working state, and a process with a
@@ -1161,6 +1203,21 @@ impl<'a> MemoryScanner<'a> {
 
 
 
+
+/// Whether these bytes begin a PE image.
+///
+/// A writable executable page that holds a PE is a module the loader mapped,
+/// which is ordinary work; the same page holding no image is where shellcode
+/// lives. Only the header is checked, never the whole file.
+fn looks_like_pe(bytes: &[u8]) -> bool {
+    if bytes.len() < 64 || &bytes[..2] != b"MZ" {
+        return false;
+    }
+    let offset = u32::from_le_bytes([bytes[0x3C], bytes[0x3D], bytes[0x3E], bytes[0x3F]]) as usize;
+    bytes
+        .get(offset..offset + 4)
+        .is_some_and(|signature| signature == b"PE\0\0")
+}
 /// Images whose ordinary work is writable executable memory.
 ///
 /// Every browser, Electron application, .NET host and Java runtime allocates
@@ -1310,21 +1367,30 @@ impl ProcessOutcome {
             .map(|detection| attribute(detection, container))
             .collect();
 
-        // The unbacked writable-and-executable page: private memory, no file
-        // behind it, and both writable and executable at once. That is where
-        // injected code lives, and it is also where a JIT lives. A thread that
-        // begins inside the page is what tells the two apart: injected code
-        // starts executing there, a JIT's worker threads start in ntdll.
+        // The unbacked writable-and-executable page. Three things can make
+        // it ordinary work rather than injected code, and each of them is
+        // checked before anything is said: the well-known JIT images, a
+        // trusted signature on the image, and an image living under Windows
+        // or Program Files. Those are skipped outright; the rest is reported,
+        // and a thread beginning inside the page is what convicts.
         if detections.is_empty()
             && interest == Interest::WritableCode
             && self.rwx_reported < 3
             && !jit_host(&self.process)
+            && !self.image_trusted
+            && !self.under_system
             && self.process.pid != std::process::id()
         {
             self.rwx_reported += 1;
-            let started_here = thread_starts(self.process.pid)
-                .iter()
-                .any(|address| *address >= region.base && *address < region.base + region.size);
+            // A page holding a PE image is a module that was mapped, not
+            // shellcode; so is one page among many in a JIT host. Both keep
+            // the report and lose the conviction.
+            let pe_like = looks_like_pe(bytes);
+            let started_here = !pe_like
+                && !self.rwx_heavy
+                && thread_starts(self.process.pid)
+                    .iter()
+                    .any(|address| *address >= region.base && *address < region.base + region.size);
             let (id, severity, sentence) = if started_here {
                 (
                     "memory/private-rwx-thread",
@@ -1335,7 +1401,7 @@ impl ProcessOutcome {
                 (
                     "memory/private-rwx",
                     Severity::High,
-                    "No thread begins in it, so it is reported and not convicted.",
+                    "It is reported and not convicted: the image is signed, under Windows, holds a PE image, or holds far more such pages than hand-written code does, or no thread begins in it.",
                 )
             };
             detections.push(attribute(

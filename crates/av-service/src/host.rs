@@ -3260,6 +3260,25 @@ impl Host {
     ) -> memory::Outcome {
         let ruling = memory::rule_on(&finding.origin, &self.paths, &self.engine.engine, options);
         let action = self.carry_out_ruling(&ruling, &finding.container());
+        // The one memory finding that stops its process: a thread begins inside
+        // an unbacked writable-executable page. That is injected code, not a
+        // just-in-time compiler, which the heuristic reports as High instead.
+        // The same guard as every other stop decides whether this process may be
+        // stopped at all -- nothing under C:\Windows, no protected image, no
+        // session-0 service -- because killing one of those takes the machine
+        // with it.
+        let injected = finding
+            .detections
+            .iter()
+            .any(|detection| detection.rule_id == "memory/private-rwx-thread");
+        if injected && safe_to_stop(finding.process.pid) {
+            let token = crate::terminate::ProcessToken::of(finding.process.pid);
+            let stopped = crate::terminate::stop(&token);
+            log::warn!(
+                "response: stopped pid {} after memory/private-rwx-thread ({stopped:?})",
+                finding.process.pid
+            );
+        }
         memory::Outcome {
             decision: ruling.action,
             action,

@@ -20,6 +20,8 @@ av-scan.workspace = true
 # `\??\C:` or about a trailing separator. This crate has no dependencies at all,
 # so nothing about a kernel driver comes with it.
 av-driver-proto.workspace = true
+# A signed image is not injected code; the heuristic asks before it reports.
+av-authenticode.workspace = true
 
 log.workspace = true
 serde.workspace = true
