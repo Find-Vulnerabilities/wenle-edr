@@ -418,6 +418,28 @@ impl ScanEngine {
             detection
         });
 
+        // A compiled rule database is made of the strings its rules search for.
+        // Scanning one reports the corpus a database describes as the malware it
+        // describes, and on 2026-11-21 the product quarantined a database it had
+        // just built for exactly that reason. `.avdb` is this product's
+        // container; no other kind of file uses it.
+        if blocked.is_none()
+            && path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("avdb"))
+        {
+            return self.declined_report(
+                path,
+                data,
+                digests,
+                "scan/rule-database",
+                "This file is a compiled rule database, the container this product reads, \
+                 and it was not examined: it contains the very strings its rules search for."
+                    .to_string(),
+                started,
+            );
+        }
+
         // -- a rule source this product did not write -------------------------
         //
         // After the blocklist and before the rules, which is the only position
