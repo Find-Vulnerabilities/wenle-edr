@@ -62,7 +62,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use av_core::{
-    Assessment, Detection, DetectionSource, Digests, FileScanReport, HashKind, Hasher, ScanFailure,
+    Assessment, Detection, DetectionSource, Digests, FileKind, FileScanReport, HashKind, Hasher, ScanFailure,
     Verdict,
     ScanOptions, Severity, VerdictThresholds,
 };
@@ -470,9 +470,16 @@ impl ScanEngine {
             true => heuristics::evaluate(examined, image.as_ref(), &self.heuristics),
             false => Vec::new(),
         };
-        if !path
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("psd1"))
+        // Only a file the path calls a script. The script reader has a text
+        // fallback for callers with no path (the AMSI buffer used to arrive that
+        // way); calling it for every readable text file made a Tor consensus
+        // file and a browser's ChangeLog "script/execute-sink". The AMSI path
+        // names its buffer with a script extension now, so the fallback is not
+        // needed here.
+        if kind == FileKind::Script
+            && !path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("psd1"))
         {
             heuristic_detections.extend(crate::script::assess(kind, examined));
         }
