@@ -303,6 +303,13 @@ pub struct Host {
     story_model: Option<av_behaviour::StoryModel>,
     /// Each process's recent events, for the sequence model.
     behaviour_stories: std::collections::HashMap<u32, Vec<av_behaviour::Features>>,
+    /// The last memory scan of each process, and when it ran. A client that
+    /// polls gets the cached report rather than a fresh walk: walking a
+    /// process again allocates its regions, and the allocator keeps private
+    /// bytes that Windows does not trim. Measured 2026-11-22: with a client
+    /// polling, private bytes grew about 370 MB a minute; with this cache the
+    /// walk happens once per TTL instead of once per request.
+    process_scan_cache: std::collections::HashMap<u32, (std::time::Instant, av_ipc::memory::MemoryReport)>,
     /// When each process last delivered an event, so a story is split at an
     /// idle gap the way the training corpus is.
     behaviour_story_gap: std::collections::HashMap<u32, u64>,
@@ -604,6 +611,7 @@ impl Host {
             behaviour_model: behaviour_model_from_environment(),
             story_model: av_behaviour::StoryModel::load(),
             behaviour_stories: std::collections::HashMap::new(),
+            process_scan_cache: std::collections::HashMap::new(),
             behaviour_story_gap: std::collections::HashMap::new(),
             behaviour_model_reported: std::collections::HashMap::new(),
             behaviour_tick: std::collections::HashMap::new(),
@@ -3162,8 +3170,24 @@ impl Host {
     }
 
     fn scan_process(&mut self, pid: u32) -> (Reply, Vec<Event>) {
+        // A client that polls this asks again for the same process long before
+        // its memory could have changed shape. Walking it again would allocate
+        // its regions again; answering from the cache is both the answer to
+        // the poll and the reason the service's private bytes stay flat.
+        const TTL: std::time::Duration = std::time::Duration::from_secs(30);
+        const CAP: usize = 64;
+        if let Some((when, report)) = self.process_scan_cache.get(&pid) {
+            if when.elapsed() < TTL {
+                return (Reply::MemoryScan(Box::new(report.clone())), Vec::new());
+            }
+        }
         let mut events = Vec::new();
         let report = self.memory_report(pid, &mut events);
+        if self.process_scan_cache.len() >= CAP {
+            self.process_scan_cache.clear();
+        }
+        self.process_scan_cache
+            .insert(pid, (std::time::Instant::now(), report.clone()));
         (Reply::MemoryScan(Box::new(report)), events)
     }
 
