@@ -1417,6 +1417,48 @@ impl ProcessOutcome {
                 container,
             ));
         }
+        // The static model sees memory too. A packed executable has already
+        // unpacked itself here by the time it runs, so the bytes in this region
+        // are the image the packer hid, not the stub on disk. Only a region
+        // that begins a PE is scored -- the model reads headers and sections,
+        // and those exist only in an image.
+        if bytes.len() > 64 && &bytes[..2] == b"MZ" {
+            if let Some(score) = av_scan::ai::score(bytes) {
+                if score >= av_scan::ai::MALICIOUS_THRESHOLD {
+                    detections.push(attribute(
+                        &Detection::new(
+                            "ai/static-model",
+                            format!(
+                                "A region that begins a PE image scores {score:.2} of 1 on the \
+                                 static model, above the conviction band at {:.2}. A packed file \
+                                 is unpacked in memory by the time it runs, and this is that image.",
+                                av_scan::ai::MALICIOUS_THRESHOLD
+                            ),
+                            Severity::Critical,
+                            DetectionSource::Memory,
+                        ),
+                        container,
+                    ));
+                } else if score >= av_scan::ai::SUSPICIOUS_THRESHOLD {
+                    detections.push(attribute(
+                        &Detection::new(
+                            "ai/static-model",
+                            format!(
+                                "A region that begins a PE image scores {score:.2} of 1 on the \
+                                 static model, between the reporting band at {:.2} and the \
+                                 conviction band at {:.2}.",
+                                av_scan::ai::SUSPICIOUS_THRESHOLD,
+                                av_scan::ai::MALICIOUS_THRESHOLD
+                            ),
+                            Severity::Low,
+                            DetectionSource::Memory,
+                        ),
+                        container,
+                    ));
+                }
+            }
+        }
+
         if detections.is_empty() {
             // Read, judged, and nothing found. This is the answer the whole
             // scan exists to be able to give, and it is only ever given when
