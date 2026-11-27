@@ -1,0 +1,241 @@
+diff --git a/crates/libmwemu/src/api/windows/common/trace.rs b/crates/libmwemu/src/api/windows/common/trace.rs
+index 654b816..af117b4 100644
+--- a/crates/libmwemu/src/api/windows/common/trace.rs
++++ b/crates/libmwemu/src/api/windows/common/trace.rs
+@@ -227,6 +227,40 @@ fn format_parameters(emu: &Emu, call: WindowsAbi, parameters: &[Parameter]) -> S
+     arguments
+ }
+ 
++
++/// Append one JSON object per call to `cfg.events_file`.
++///
++/// The text trace is for a human and changes shape with verbosity; this is the
++/// structure the sandbox pack reads. Escaped by hand so the hot path does not
++/// pull a serializer into every API call.
++fn emit_json(emu: &Emu, kind: &str, name: &str, arguments: &str, result: &str) {
++    let Some(path) = emu.cfg.events_file.as_ref() else {
++        return;
++    };
++    fn escape(text: &str) -> String {
++        let mut out = String::with_capacity(text.len() + 8);
++        for character in text.chars() {
++            match character {
++                '"' => out.push_str("\\\""),
++                '\\' => out.push_str("\\\\"),
++                '\n' => out.push_str("\\n"),
++                '\r' => out.push_str("\\r"),
++                '\t' => out.push_str("\\t"),
++                c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
++                c => out.push(c),
++            }
++        }
++        out
++    }
++    let line = format!(
++        "{{\"kind\":\"{}\",\"api\":\"{}\",\"arguments\":\"{}\",\"result\":\"{}\"}}\n",
++        escape(kind), escape(name), escape(arguments), escape(result)
++    );
++    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
++        let _ = std::io::Write::write_all(&mut file, line.as_bytes());
++    }
++}
++
+ pub(crate) fn export(emu: &Emu, call: WindowsAbi, library: &str, name: &str) {
+     if emu.cfg.verbose < 1 || !log::log_enabled!(log::Level::Trace) {
+         return;
+@@ -248,6 +282,7 @@ pub(crate) fn unsupported(
+     x86_words: u32,
+ ) {
+     let is64 = emu.cfg.arch.is_64bits();
++    emit_json(emu, "unsupported", &format!("{library}!{name}"), "", "");
+     if let Some(parameters) =
+         fallback_parameters(library, name).or_else(|| signatures::lookup(library, name)?.parameters)
+     {
+@@ -308,6 +343,7 @@ pub(crate) fn invoke(
+     } else {
+         String::new()
+     };
++    emit_json(emu, "api", name, &arguments, &result);
+     match call {
+         WinApi(_) => {
+             log_red!(emu, "{}({}){}", name, arguments, result);
+diff --git a/crates/libmwemu/src/api/windows/environment_store.rs b/crates/libmwemu/src/api/windows/environment_store.rs
+index 418ab77..8c9580d 100644
+--- a/crates/libmwemu/src/api/windows/environment_store.rs
++++ b/crates/libmwemu/src/api/windows/environment_store.rs
+@@ -308,7 +308,7 @@ fn defaults(cfg: &Config) -> Vec<(String, String)> {
+         ("SystemRoot", "C:\\Windows".to_string()),
+         ("TEMP", temp.clone()),
+         ("TMP", temp),
+-        ("USERDOMAIN", cfg.host_name.to_ascii_uppercase()),
++        ("USERDOMAIN", cfg.domain.to_ascii_uppercase()),
+         ("USERNAME", cfg.user_name.clone()),
+         ("USERPROFILE", PROFILE.to_string()),
+         ("windir", "C:\\Windows".to_string()),
+diff --git a/crates/libmwemu/src/api/windows/registry_store.rs b/crates/libmwemu/src/api/windows/registry_store.rs
+index a6a89d0..c0d45ac 100644
+--- a/crates/libmwemu/src/api/windows/registry_store.rs
++++ b/crates/libmwemu/src/api/windows/registry_store.rs
+@@ -217,6 +217,38 @@ impl Default for Registry {
+ }
+ 
+ impl Registry {
++    /// Seed the store from a text snapshot.
++    ///
++    /// One value per line: `key|name|type|data`, `#` starts a comment. Types are
++    /// `sz` and `dword`; a line with no name sets the key's default value. The
++    /// store starts with the predefined roots, so a snapshot adds what a real
++    /// machine has under them without touching the host registry.
++    pub fn load_snapshot(&mut self, path: &std::path::Path) -> std::io::Result<usize> {
++        let text = std::fs::read_to_string(path)?;
++        let mut loaded = 0;
++        for line in text.lines() {
++            let line = line.trim();
++            if line.is_empty() || line.starts_with('#') {
++                continue;
++            }
++            let mut parts = line.split('|');
++            let Some(key) = parts.next().map(str::trim).filter(|key| !key.is_empty()) else {
++                continue;
++            };
++            let name = parts.next().unwrap_or("").trim();
++            let kind = parts.next().unwrap_or("sz").trim();
++            let data = parts.next().unwrap_or("").trim();
++            self.create_key(key);
++            let value = match kind {
++                "dword" => dword(data.parse::<u32>().unwrap_or(0)),
++                _ => sz(data),
++            };
++            self.set_value(key, name, value);
++            loaded += 1;
++        }
++        Ok(loaded)
++    }
++
+     pub fn key_exists(&self, path: &str) -> bool {
+         find(&self.keys, path).is_some()
+     }
+diff --git a/crates/libmwemu/src/config.rs b/crates/libmwemu/src/config.rs
+index 8dae643..38f9452 100644
+--- a/crates/libmwemu/src/config.rs
++++ b/crates/libmwemu/src/config.rs
+@@ -35,6 +35,10 @@ pub struct Config {
+     pub trace_string: bool,
+     pub trace_flags: bool,
+     pub trace_filename: Option<String>,
++    /// Where to append one JSON object per API call. `None` disables it.
++    pub events_file: Option<String>,
++    /// Registry snapshot to seed the emulated store from.
++    pub registry_file: Option<String>,
+     pub trace_start: u64,
+     pub reg_names: Vec<String>, // which reg to trace
+     pub stack_trace: bool,
+@@ -105,6 +109,7 @@ pub struct Config {
+     pub exe_name: String,
+     pub user_name: String,
+     pub host_name: String,
++    pub domain: String,
+     pub temp_path: String,
+     pub cwd_path: String,
+     pub windows_directory: String,
+@@ -137,6 +142,8 @@ impl Config {
+             trace_regs: false,
+             trace_reg: false,
+             trace_filename: None,
++        events_file: None,
++        registry_file: None,
+             trace_start: 0,
+             trace_string: false,
+             trace_flags: false,
+@@ -191,6 +198,7 @@ impl Config {
+             exe_name: EXE_NAME.to_string(),
+             user_name: USER_NAME.to_string(),
+             host_name: HOST_NAME.to_string(),
++        domain: "WORKGROUP".to_string(),
+             temp_path: TEMP_PATH.to_string(),
+             cwd_path: CWD_PATH.to_string(),
+             windows_directory: WINDOWS_DIRECTORY.to_string(),
+@@ -590,6 +598,11 @@ impl Config {
+         self
+     }
+ 
++    pub fn set_domain(&mut self, name: impl Into<String>) -> &mut Self {
++        self.domain = name.into();
++        self
++    }
++
+     /// Set the emulated temp directory path.
+     pub fn set_temp_path(&mut self, path: impl Into<String>) -> &mut Self {
+         self.temp_path = path.into();
+diff --git a/crates/libmwemu/src/emu/mod.rs b/crates/libmwemu/src/emu/mod.rs
+index c6aa150..186c757 100644
+--- a/crates/libmwemu/src/emu/mod.rs
++++ b/crates/libmwemu/src/emu/mod.rs
+@@ -315,6 +315,12 @@ pub struct Emu {
+ 
+ // --- Random source ---
+ impl Emu {
++    /// Seed the emulated registry from a snapshot file. See
++    /// [`crate::winapi::registry_store::Registry::load_snapshot`].
++    pub fn load_registry_snapshot(&mut self, path: &std::path::Path) -> std::io::Result<usize> {
++        self.registry.load_snapshot(path)
++    }
++
+     /// Re-seed the emulator's random source so `rdrand`/`rdseed` return the
+     /// same sequence on every run. Also records the seed in `cfg.seed`.
+     pub fn set_seed(&mut self, seed: u64) {
+diff --git a/crates/mwemu/src/main.rs b/crates/mwemu/src/main.rs
+index 8868cfb..15b756a 100644
+--- a/crates/mwemu/src/main.rs
++++ b/crates/mwemu/src/main.rs
+@@ -157,11 +157,16 @@ fn cli() -> App<'static, 'static> {
+             .default_value("1000000")
+             .validator(|value| value.parse::<u64>().map(drop).map_err(|error| error.to_string())))
+         .arg(clap_arg!("nocolors", "n", "nocolors", "print without colors for redirecting to a file >out"))
++        .arg(clap_arg!("events_json", "", "events-json", "append one JSON object per API call to this file", "PATH"))
++        .arg(clap_arg!("registry", "", "registry", "seed the emulated registry from a key|name|type|data snapshot", "PATH"))
++        .arg(clap_arg!("username", "", "username", "user name the emulated process runs as", "NAME"))
++        .arg(clap_arg!("hostname", "", "hostname", "computer name reported to the sample", "NAME"))
++        .arg(clap_arg!("domain", "", "domain", "domain reported by USERDOMAIN", "NAME"))
+         .arg(clap_arg!("ioctl_scan", "", "ioctl-scan", "kernel driver (.sys): after DriverEntry, harvest the IOCTL codes from the driver's code and send each one, reporting the privileged operations (MSR, port I/O, physical memory) it reaches"))
+         .arg(clap_arg!("ioctl", "", "ioctl", "kernel driver (.sys): after DriverEntry send one IOCTL. CODE[:INPUT_HEX[:OUTPUT_LEN]], e.g. 0x9c402404:4142434400000000:64", "SPEC"))
+         .arg(clap_arg!("string", "s", "string", "monitor string on a specific address", "ADDRESS"))
+         .arg(clap_arg!("inspect", "i", "inspect", "monitor memory like: -i 'dword ptr [ebp + 0x24]", "DIRECTION"))
+-        //.arg(clap_arg!("endpoint", "e", "endpoint", "perform communications with the endpoint, use tor or vpn!"))
++        .arg(clap_arg!("endpoint", "e", "endpoint", "emulate network endpoints (sockets, HTTP) instead of failing them"))
+         .arg(clap_arg!("console_addr", "C", "console_addr", "spawn console on first eip = address", "ADDRESS"))
+         .arg(clap_arg!("entry_point", "a", "entry", "entry point of the shellcode, by default starts from the beginning.", "ADDRESS"))
+         .arg(clap_arg!("exit_position", "e", "exit", "exit position of the shellcode", "POSITION"))
+@@ -631,10 +636,31 @@ fn main() -> process::ExitCode {
+ 
+     // endpoint
+     if matches.is_present("endpoint") {
+-        //TODO: emu::endpoint::warning();
+         emu.cfg.endpoint = true;
+     }
+ 
++    if let Some(value) = matches.value_of("events_json") {
++        emu.cfg.events_file = Some(value.to_string());
++    }
++
++    if let Some(value) = matches.value_of("registry") {
++        match emu.load_registry_snapshot(std::path::Path::new(value)) {
++            Ok(count) => eprintln!("[mwemu] registry snapshot: {count} values"),
++            Err(error) => eprintln!("[mwemu] registry snapshot failed: {error}"),
++        }
++    }
++
++    // simulated identity
++    if let Some(value) = matches.value_of("username") {
++        emu.cfg.user_name = value.to_string();
++    }
++    if let Some(value) = matches.value_of("hostname") {
++        emu.cfg.host_name = value.to_string();
++    }
++    if let Some(value) = matches.value_of("domain") {
++        emu.cfg.domain = value.to_string();
++    }
++
+     // console
+     if matches.is_present("console_addr") {
+         emu.cfg.console2 = true;

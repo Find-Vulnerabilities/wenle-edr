@@ -1,0 +1,70 @@
+name: Publish release assets
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Keep the zip and upload its loose files
+    runs-on: windows-latest
+    steps:
+      - name: Check out the released tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Publish assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path 'install-wenle.ps1')) {
+              throw "install-wenle.ps1 is missing from $env:RELEASE_TAG"
+          }
+
+          $download = Join-Path $env:RUNNER_TEMP 'wenle-release'
+          Remove-Item $download -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $download -Force | Out-Null
+          gh release download $env:RELEASE_TAG --pattern '*.zip' --dir $download --clobber
+
+          $zips = @(Get-ChildItem -LiteralPath $download -Filter '*.zip')
+          if ($zips.Count -eq 0) {
+              throw "release $env:RELEASE_TAG has no zip asset"
+          }
+
+          foreach ($zip in $zips) {
+              $unpack = Join-Path $env:RUNNER_TEMP ('wenle-unpack-' + [guid]::NewGuid().ToString('N'))
+              Expand-Archive -LiteralPath $zip.FullName -DestinationPath $unpack -Force
+              $manifest = Join-Path $unpack 'manifest.txt'
+              if (-not (Test-Path $manifest)) {
+                  throw "$($zip.Name) has no manifest.txt"
+              }
+              $legacy = Join-Path $unpack 'update.lua'
+              if (Test-Path $legacy) {
+                  Remove-Item -LiteralPath $legacy -Force
+                  $lines = @(Get-Content -LiteralPath $manifest | Where-Object { $_ -notmatch '^\S+\s+update\.lua\s*$' })
+                  [IO.File]::WriteAllLines($manifest, $lines, (New-Object Text.UTF8Encoding($false)))
+              }
+              if (-not (Test-Path (Join-Path $unpack 'install-wenle.ps1'))) {
+                  Copy-Item -LiteralPath 'install-wenle.ps1' -Destination (Join-Path $unpack 'install-wenle.ps1') -Force
+              }
+              Remove-Item -LiteralPath $zip.FullName -Force
+              Compress-Archive -Path (Join-Path $unpack '*') -DestinationPath $zip.FullName -Force
+              gh release upload $env:RELEASE_TAG $zip.FullName --clobber
+
+              # Direct `wenle update fetch` mode: the manifest and every file
+              # it names must also exist as release assets, not only inside
+              # the zip. update.lua is removed before this upload.
+              $files = @(Get-ChildItem -LiteralPath $unpack -File | Select-Object -ExpandProperty FullName)
+              if ($files.Count -eq 0) {
+                  throw "$($zip.Name) contains no files"
+              }
+              gh release upload $env:RELEASE_TAG @files --clobber
+              Remove-Item -LiteralPath $unpack -Recurse -Force
+          }

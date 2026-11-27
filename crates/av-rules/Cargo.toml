@@ -1,0 +1,46 @@
+[package]
+name = "av-rules"
+description = "Native rule language: parser, compiler, bytecode virtual machine and pattern matchers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+av-core.workspace = true
+av-pe.workspace = true
+av-signatures.workspace = true
+# The prefilter's multi-pattern search. Every atom the rule engine produces is
+# three or four bytes (`atoms::MIN_ATOM_LEN`/`MAX_ATOM_LEN`), which is a shape a
+# general automaton pays for and does not need; `av-patterns` is the matcher
+# that knows it. See `prefilter`'s module documentation for the measurement
+# that made this a dependency rather than a candidate.
+av-patterns.workspace = true
+
+serde.workspace = true
+thiserror.workspace = true
+log.workspace = true
+bitflags.workspace = true
+smallvec.workspace = true
+aho-corasick.workspace = true
+regex.workspace = true
+memchr.workspace = true
+regex-syntax.workspace = true
+once_cell.workspace = true
+byteorder.workspace = true
+bincode.workspace = true
+hex.workspace = true
+memmap2.workspace = true
+
+[features]
+# A diagnostic module that accounts for a loaded database's memory field by
+# field. Off by default: nothing in the product calls it, and it exists so that
+# a question about memory can be answered with a measurement. See `probe`.
+memory-probe = []
+
+[dev-dependencies]
+tempfile.workspace = true

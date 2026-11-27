@@ -1,0 +1,120 @@
+﻿/*
+ * Documents and data files that execute something.
+ *
+ * The script reader no longer reads structured files as scripts -- that was the
+ * fix for WF.msc and SFPATRS1.inf being convicted. The other half of that trade
+ * is here: a document is scanned for the specific thing that makes it execute,
+ * not for words that Windows happens to put in it.
+ *
+ * Every rule needs the container's identity *and* an execution sink. An INF
+ * that names InstallHinfSection and a URL, a Run key whose value is a command,
+ * a PDF with JavaScript that evaluates, an LNK that starts PowerShell: those
+ * are behavioural statements. A document that merely mentions PowerShell is
+ * not.
+ */
+
+rule dropper_inf_execution {
+    meta:
+        description = "An INF that installs itself and runs a command or fetches a URL."
+        severity = "high"
+        category = "dropper"
+        family = "Inf"
+    strings:
+        $section = "InstallHinfSection" ascii wide nocase
+        $cmd1 = "powershell" ascii wide nocase
+        $cmd2 = "cmd.exe" ascii wide nocase
+        $cmd3 = "mshta" ascii wide nocase
+        $cmd4 = "wscript" ascii wide nocase
+        $url1 = "http://" ascii wide nocase
+        $url2 = "https://" ascii wide nocase
+    condition:
+        $section and any of ($cmd*) and any of ($url*)
+}
+
+rule dropper_reg_run_command {
+    meta:
+        description = "A registry import that writes a Run value which starts a script host or fetches code."
+        severity = "high"
+        category = "persistence"
+        family = "RunCommand"
+    strings:
+        $header = "Windows Registry Editor" ascii wide nocase
+        $run = "CurrentVersion\\Run" ascii wide nocase
+        $host1 = "powershell" ascii wide nocase
+        $host2 = "mshta" ascii wide nocase
+        $host3 = "wscript" ascii wide nocase
+        $host4 = "cmd.exe /c" ascii wide nocase
+        $url = "http" ascii wide nocase
+    condition:
+        $header and $run and any of ($host*) and $url
+}
+
+rule dropper_lnk_shell {
+    meta:
+        description = "A shell link whose target is a script host or a remote URL."
+        severity = "high"
+        category = "dropper"
+        family = "Lnk"
+    strings:
+        $header = { 4C 00 00 00 01 14 02 00 00 00 00 00 C0 00 00 00 00 00 00 46 }
+        $host1 = "powershell" ascii wide nocase
+        $host2 = "cmd.exe" ascii wide nocase
+        $host3 = "mshta" ascii wide nocase
+        $host4 = "wscript" ascii wide nocase
+        $url = "http" ascii wide nocase
+        $enc = "-enc" ascii wide nocase
+    condition:
+        $header and any of ($host*) and (any of ($url*) or $enc)
+}
+
+rule exploit_pdf_javascript {
+    meta:
+        description = "A PDF that opens JavaScript and evaluates dynamic code."
+        severity = "high"
+        category = "exploit"
+        family = "Pdf.JavaScript"
+    strings:
+        $javascript = "/JavaScript" ascii wide nocase
+        $open1 = "/OpenAction" ascii wide nocase
+        $open2 = "/AA" ascii wide nocase
+        $sink1 = "eval" ascii wide nocase
+        $sink2 = "unescape" ascii wide nocase
+        $sink3 = "app.launchurl" ascii wide nocase
+        $sink4 = "util.printf" ascii wide nocase
+    condition:
+        $javascript and any of ($open*) and any of ($sink*)
+}
+
+rule macro_office_autostart_download {
+    meta:
+        description = "An Office document whose macro runs on open and downloads or starts a program."
+        severity = "high"
+        category = "dropper"
+        family = "OfficeMacro"
+    strings:
+        $auto1 = "AutoOpen" ascii wide nocase
+        $auto2 = "Document_Open" ascii wide nocase
+        $auto3 = "Workbook_Open" ascii wide nocase
+        $vba = "VBA" ascii wide nocase
+        $sink1 = "URLDownloadToFile" ascii wide nocase
+        $sink2 = "powershell" ascii wide nocase
+        $sink3 = "CreateObject" ascii wide nocase
+        $sink4 = "Shell" ascii wide nocase
+    condition:
+        any of ($auto*) and $vba and any of ($sink*)
+}
+
+rule exploit_rtf_object_update {
+    meta:
+        description = "An RTF that updates an embedded object and starts a command."
+        severity = "medium"
+        category = "exploit"
+    strings:
+        $update = "\\objupdate" ascii wide nocase
+        $cmd1 = "cmd.exe" ascii wide nocase
+        $cmd2 = "powershell" ascii wide nocase
+        $cmd3 = "mshta" ascii wide nocase
+    condition:
+        $update and any of ($cmd*)
+}
+

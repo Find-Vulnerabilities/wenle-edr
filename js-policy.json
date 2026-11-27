@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "extensions": ["js", "mjs", "cjs"],
+  "suppress_yara": [
+    "SIGNATURE_BASE_Apt_CN_Tetrisplugins_JS"
+  ],
+  "rules": [
+    {
+      "id": "script/js-encoded-eval",
+      "description": "JavaScript decodes an encoded payload and evaluates it.",
+      "weight": 80, "window": 512,
+      "all": [
+        ["eval(", "newfunction("],
+        ["atob(", "buffer.from(", "fromcharcode(", "unescape("],
+        ["base64", "fromcharcode", "unescape"]
+      ]
+    },
+    {
+      "id": "script/js-shell-exec",
+      "description": "JavaScript runs a downloaded or interpreter command through child_process.",
+      "weight": 80, "window": 512,
+      "all": [
+        ["child_process", "require(\"child_process\"", "require('child_process'"],
+        ["exec(", "execsync(", "spawn(", "spawnsync("],
+        ["curlhttp", "wgethttp", "powershell", "cmd.exe", "/bin/sh", "bash-c", "certutil", "bitsadmin", "osascript"]
+      ]
+    },
+    {
+      "id": "script/js-remote-eval",
+      "description": "JavaScript fetches remote content and evaluates an encoded string.",
+      "weight": 80, "window": 512,
+      "all": [
+        ["eval(", "newfunction(", "vm.runinthiscontext", "vm.runinnewcontext"],
+        ["fetch(", "xmlhttprequest", "http.get(", "https.get("],
+        ["atob(", "buffer.from(", "fromcharcode(", "unescape("]
+      ]
+    },
+    {
+      "id": "script/js-vm-loader",
+      "description": "JavaScript runs an encoded buffer through the Node VM loader.",
+      "weight": 80, "window": 512,
+      "all": [
+        ["vm.runinthiscontext", "vm.runinnewcontext", "vm.runincontext"],
+        ["buffer.from(", "atob(", "fromcharcode("],
+        ["base64", "binary", "hex"]
+      ]
+    },
+    {
+      "id": "script/js-reverse-shell",
+      "description": "JavaScript connects a socket and starts a process.",
+      "weight": 80, "window": 512,
+      "all": [
+        ["net.connect(", "net.socket(", "socket.connect("],
+        ["child_process", "require(\"child_process\"", "require('child_process'"],
+        ["exec(", "spawn(", "execsync(", "spawnsync("]
+      ]
+    }
+  ]
+}
+

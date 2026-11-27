@@ -1,0 +1,32 @@
+{
+    "schema":  1,
+    "name":  "wenle-mwemu-pack",
+    "version":  "1.0.0",
+    "entry":  "runner.py",
+    "engine":  {
+                   "name":  "mwemu",
+                   "version":  "1.0.1",
+                   "license":  "Apache-2.0",
+                   "source":  "https://github.com/mwemuorg/mwemu",
+                   "pinned":  true
+               },
+    "capabilities":  [
+                         "pe32",
+                         "pe64",
+                         "api-trace",
+                         "syscall-counts",
+                         "unsupported-api",
+                         "event-schema",
+                         "analysis"
+                     ],
+    "files":  [
+                  {
+                      "path":  "runner.py",
+                      "sha256":  "4228829f7cbd02879733c9bdd7a18e16357726f3d64009b507fcd266034feeac"
+                  },
+                  {
+                      "path":  "selftest.py",
+                      "sha256":  "4ae9c53ad914aa95e90fc8d110a4d621d2e0ac9c6e10abe32c73698026b0289e"
+                  }
+              ]
+}

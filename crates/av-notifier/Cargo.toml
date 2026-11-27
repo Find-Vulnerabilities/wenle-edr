@@ -1,0 +1,32 @@
+[package]
+name = "av-notifier"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Posts the product's desktop notifications without the window"
+
+[[bin]]
+name = "wenle-notify"
+path = "src/main.rs"
+
+[dependencies]
+av-core = { path = "../av-core" }
+av-ipc = { path = "../av-ipc" }
+av-service = { path = "../av-service" }
+av-quarantine = { path = "../av-quarantine" }
+chrono.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Foundation",
+    "Data_Xml_Dom",
+    "UI_Notifications",
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_WinRT",
+    "Win32_System_LibraryLoader",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
