@@ -221,6 +221,12 @@ pub const IOCTL_PROTECT_ORIGINAL: u32 =
 /// The largest path the protect-original message may carry.
 pub const PROTECTED_ORIGINAL_MAX_UNITS: usize = 1024;
 
+/// Deny every open of the protected path.
+pub const PROTECT_ORIGINAL_DENY_ALL: u32 = 0;
+
+/// Deny read/execute but allow a writer to finish a download.
+pub const PROTECT_ORIGINAL_ALLOW_WRITES: u32 = 1;
+
 /// Every control code this driver answers, for a test to walk and a driver's
 /// `IRP_MJ_DEVICE_CONTROL` handler to sanity-check its own table against.
 pub const ALL_CONTROL_CODES: [u32; 10] = [

@@ -108,6 +108,29 @@ pub enum RealtimeEvent {
         /// Why the scan was put off.
         reason: String,
     },
+    /// A large archive is being scanned on a worker thread.
+    ///
+    /// The path is not safe to open until `ScanFinished` arrives. The service
+    /// uses this event to put the path under the driver's deny table, which is
+    /// the fail-closed half of the asynchronous design: the watcher thread is
+    /// free, but nobody can read the archive while it is unscanned.
+    ScanPending {
+        /// The archive being scanned.
+        path: PathBuf,
+        /// Its size when the scan was queued.
+        size: u64,
+        /// Why it was moved off the watcher thread.
+        reason: String,
+    },
+    /// The background scan of a large archive finished.
+    ScanFinished {
+        /// The archive that was scanned.
+        path: PathBuf,
+        /// The finding, when the verdict was not clean.
+        finding: Option<Finding>,
+        /// Why the scan failed, when it did.
+        error: Option<String>,
+    },
     /// A root is no longer being watched.
     ///
     /// The coverage the caller believes it has is now smaller than it believes.
@@ -435,7 +458,7 @@ impl RealtimeService {
 /// vault and an immutable engine without threading six parameters through every
 /// call.
 struct Scanner<'a> {
-    engine: &'a ScanEngine,
+    engine: &'a Arc<ScanEngine>,
     vault: &'a mut QuarantineVault,
     exclusions: &'a ExclusionSet,
     options: &'a ScanOptions,
@@ -444,6 +467,14 @@ struct Scanner<'a> {
 }
 
 impl Scanner<'_> {
+    fn engine_for_worker(&self) -> Arc<ScanEngine> {
+        Arc::clone(self.engine)
+    }
+
+    fn options_for_worker(&self) -> ScanOptions {
+        self.options.clone()
+    }
+
     /// Scan one file and decide what to do about it.
     ///
     /// `action` is the event that led here, or `None` for a file found by a tree
@@ -862,6 +893,57 @@ fn scan_due(
         }
         return false;
     }
+    if is_async_archive(path) {
+        let first = std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+        std::thread::sleep(std::time::Duration::from_millis(750));
+        let second = std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+        if first != second || !file_is_closed(path) {
+            let _ = out.send(RealtimeEvent::ScanDeferred {
+                path: path.to_path_buf(),
+                reason: "the archive is still being written".to_string(),
+            });
+            return true;
+        }
+        let size = second;
+        let engine = scanner.engine_for_worker();
+        let options = scanner.options_for_worker();
+        let worker_path = path.to_path_buf();
+        let worker_out = out.clone();
+        let _ = out.send(RealtimeEvent::ScanPending {
+            path: path.to_path_buf(),
+            size,
+            reason: "large archive moved to the background scanner".to_string(),
+        });
+        let spawned = std::thread::Builder::new()
+            .name("wenle-archive-scan".to_string())
+            .spawn(move || {
+                let report = engine.scan_file(&worker_path, &options);
+                let error = report.error.clone();
+                let finding = if report.verdict() == av_core::Verdict::Clean {
+                    None
+                } else {
+                    Some(Finding::from_report(
+                        &report,
+                        Phase::observed(SOURCE, false),
+                        None,
+                    ))
+                };
+                let _ = worker_out.send(RealtimeEvent::ScanFinished {
+                    path: worker_path,
+                    finding,
+                    error,
+                });
+            });
+        if let Err(error) = spawned {
+            log::error!("the archive scanner could not be started: {error}");
+            let _ = out.send(RealtimeEvent::ScanFinished {
+                path: path.to_path_buf(),
+                finding: None,
+                error: Some(format!("the archive scanner could not be started: {error}")),
+            });
+        }
+        return false;
+    }
     let mut retry = false;
     if let Some(finding) = scanner.file_with_status(path, None, stats, &mut retry) {
         let _ = out.send(RealtimeEvent::Detected(finding));
@@ -873,6 +955,53 @@ fn scan_due(
         });
     }
     retry
+}
+
+/// Whether no writer currently holds this file open.
+///
+/// A size that is stable for 750 ms is not enough: a network copy can pause
+/// between chunks, and protecting the path at that point denies the writer's
+/// own next open, which strands a partial archive. Opening with no sharing is
+/// the same question the later protect would answer, asked before we change
+/// anyone's access.
+fn file_is_closed(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(path)
+        {
+            Ok(file) => {
+                drop(file);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        true
+    }
+}
+
+/// Whether this file is the shape that must not run on the watcher thread.
+fn is_async_archive(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.len() < 32 * 1024 * 1024 {
+        return false;
+    }
+    matches!(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase())
+            .as_deref(),
+        Some("zip" | "7z" | "rar" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "iso" | "cab" | "jar")
+    )
 }
 
 /// The scan options a realtime scan runs with.

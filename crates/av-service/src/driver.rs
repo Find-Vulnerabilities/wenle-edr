@@ -140,7 +140,7 @@ pub fn check() -> DriverStatus {
 /// driver can still be told the path it is not to open. The slot is one path;
 /// the next quarantine that needs protection replaces it.
 #[cfg(windows)]
-pub fn protect_original(path: &std::path::Path) -> Result<(), String> {
+pub fn protect_original(path: &std::path::Path, mode: u32) -> Result<(), String> {
     use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE};
     use windows::Win32::Storage::FileSystem::{
         CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
@@ -168,8 +168,9 @@ pub fn protect_original(path: &std::path::Path) -> Result<(), String> {
         .encode_utf16()
         .take(av_driver_proto::ioctl::PROTECTED_ORIGINAL_MAX_UNITS)
         .collect();
-    let mut input = Vec::with_capacity(4 + path_units.len() * 2);
+    let mut input = Vec::with_capacity(8 + path_units.len() * 2);
     input.extend_from_slice(&(path_units.len() as u32).to_le_bytes());
+    input.extend_from_slice(&mode.to_le_bytes());
     for unit in &path_units {
         input.extend_from_slice(&unit.to_le_bytes());
     }
@@ -196,8 +197,16 @@ pub fn protect_original(path: &std::path::Path) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-pub fn protect_original(_path: &std::path::Path) -> Result<(), String> {
+pub fn protect_original(_path: &std::path::Path, _mode: u32) -> Result<(), String> {
     Err("this build has no Windows driver".to_string())
+}
+
+/// Clear the protected-original slot after a background scan comes back clean.
+pub fn clear_original() -> Result<(), String> {
+    protect_original(
+        std::path::Path::new(""),
+        av_driver_proto::ioctl::PROTECT_ORIGINAL_DENY_ALL,
+    )
 }
 
 /// Translate one driver event into the protocol's vocabulary.

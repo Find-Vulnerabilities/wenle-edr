@@ -3079,7 +3079,10 @@ impl Host {
                     // handle defeats both the delete and the rename into the
                     // blocked directory, but not a create gate keyed on the
                     // path.
-                    if let Err(error) = crate::driver::protect_original(path) {
+                    if let Err(error) = crate::driver::protect_original(
+                        path,
+                        av_driver_proto::ioctl::PROTECT_ORIGINAL_DENY_ALL,
+                    ) {
                         log::warn!(
                             "{} is still on disk and the driver could not be asked to protect it: {error}",
                             path.display()
@@ -3787,6 +3790,93 @@ impl Host {
                     "{} was deferred for a later scan: {reason}",
                     path.display()
                 );
+            }
+            RealtimeEvent::ScanPending {
+                path,
+                size,
+                reason,
+            } => {
+                // Fail closed before the background scan starts. The driver
+                // refuses create and executable-section opens for this path
+                // until ScanFinished is clean.
+                log::warn!(
+                    "{} is {} bytes and was moved to the background scanner: {reason}",
+                    path.display(),
+                    size
+                );
+                if let Err(error) = crate::driver::protect_original(
+                    &path,
+                    av_driver_proto::ioctl::PROTECT_ORIGINAL_ALLOW_WRITES,
+                ) {
+                    log::warn!(
+                        "{} is pending a background scan and the driver could not be asked to block it: {error}",
+                        path.display()
+                    );
+                }
+            }
+            RealtimeEvent::ScanFinished {
+                path,
+                finding,
+                error,
+            } => {
+                if let Some(error) = error {
+                    // The archive is still protected: an unreadable scan is
+                    // not a clean one.
+                    log::warn!(
+                        "the background scan of {} did not finish: {error}",
+                        path.display()
+                    );
+                    return;
+                }
+                match finding {
+                    Some(finding) => {
+                        if self.allowed(&finding.path) {
+                            let _ = crate::driver::clear_original();
+                            return;
+                        }
+                        // CopyFileEx can be served on a system worker rather
+                        // than this service image, so the driver's caller check
+                        // does not recognise the quarantine read. Clear the
+                        // temporary block for the copy, then put deny-all back
+                        // immediately after. A service-PID bypass in the driver
+                        // is the next step; this is the bounded window.
+                        if let Err(error) = crate::driver::clear_original() {
+                            log::warn!(
+                                "{} could not be released for quarantine: {error}",
+                                finding.path.display()
+                            );
+                        }
+                        let action = match already_decided(&finding) {
+                            Some(action) => action,
+                            None if should_take(finding.verdict) => {
+                                self.quarantine(&finding.path, context_for_finding(&finding))
+                            }
+                            None => DetectionAction::Reported,
+                        };
+                        if let Err(error) = crate::driver::protect_original(
+                            &finding.path,
+                            av_driver_proto::ioctl::PROTECT_ORIGINAL_DENY_ALL,
+                        ) {
+                            log::warn!(
+                                "{} was convicted and the driver could not be switched to deny-all after quarantine: {error}",
+                                finding.path.display()
+                            );
+                        }
+                        out.push(Event::Detection(detection_for_finding(&finding, action)));
+                    }
+                    None => {
+                        log::info!(
+                            "{} finished its background scan clean; releasing the driver block",
+                            path.display()
+                        );
+                        if let Err(error) = crate::driver::clear_original() {
+                            log::warn!(
+                                "{} scanned clean but the driver block could not be cleared: {error}",
+                                path.display()
+                            );
+                        }
+                    }
+                }
             }
             RealtimeEvent::WatchFailed { root, error } => {
                 // The coverage the user believes they have is now smaller than

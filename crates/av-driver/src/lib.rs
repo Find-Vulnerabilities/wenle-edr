@@ -2061,9 +2061,14 @@ unsafe extern "system" fn create_pre_operation(
         // runs at PASSIVE_LEVEL, which the name query requires.
         if let Some(units) = unsafe { operation_file_dos_path(data, &mut blocked_path) } {
             if units > 0 && is_protected_original(&blocked_path[..units]) {
-                bump(C_BLOCKED_WRITES);
-                unsafe { refuse(data, STATUS_ACCESS_DENIED) };
-                return FLT_PREOP_COMPLETE;
+                // Pending-mode denies reads and execution but lets the writer
+                // finish the download. Deny-all is the quarantine state.
+                let wants_read = wanted & (0x0001 | 0x0008 | 0x0020) != 0;
+                if protected_original_mode() == PROTECT_MODE_DENY_ALL || wants_read {
+                    bump(C_BLOCKED_WRITES);
+                    unsafe { refuse(data, STATUS_ACCESS_DENIED) };
+                    return FLT_PREOP_COMPLETE;
+                }
             }
             if units > 0 && contains_ascii_ci(&blocked_path[..units], r"\programdata\wenleav\blocked\") {
                 bump(C_BLOCKED_WRITES);
@@ -2828,6 +2833,10 @@ fn gate_matches(path: &[u16]) -> bool {
 static mut PROTECTED_ORIGINAL: [u16; av_driver_proto::ioctl::PROTECTED_ORIGINAL_MAX_UNITS] =
     [0; av_driver_proto::ioctl::PROTECTED_ORIGINAL_MAX_UNITS];
 static PROTECTED_ORIGINAL_LEN: AtomicUsize = AtomicUsize::new(0);
+static PROTECTED_ORIGINAL_MODE: AtomicU32 = AtomicU32::new(0);
+
+const PROTECT_MODE_DENY_ALL: u32 = 0;
+const PROTECT_MODE_ALLOW_WRITES: u32 = 1;
 
 fn same_path_ci(left: &[u16], right: &[u16]) -> bool {
     left.len() == right.len()
@@ -2866,12 +2875,14 @@ fn is_protected_original(path: &[u16]) -> bool {
 /// input-buffer length the I/O manager reported; the unit count in the buffer
 /// is validated against it before any read.
 pub(crate) unsafe fn set_protected_original(buffer: *const u8, length: u32) -> i32 {
-    if buffer.is_null() || length < 4 {
+    if buffer.is_null() || length < 8 {
         return STATUS_INVALID_PARAMETER;
     }
     let units = unsafe { core::ptr::read_unaligned(buffer.cast::<u32>()) } as usize;
+    let mode = unsafe { core::ptr::read_unaligned(buffer.add(4).cast::<u32>()) };
     if units > av_driver_proto::ioctl::PROTECTED_ORIGINAL_MAX_UNITS
-        || (length as usize) < 4 + units.saturating_mul(2)
+        || (length as usize) < 8 + units.saturating_mul(2)
+        || (mode != PROTECT_MODE_DENY_ALL && mode != PROTECT_MODE_ALLOW_WRITES)
     {
         return STATUS_INVALID_PARAMETER;
     }
@@ -2881,14 +2892,19 @@ pub(crate) unsafe fn set_protected_original(buffer: *const u8, length: u32) -> i
         // UTF-16 units, and the destination is the static array's full width.
         unsafe {
             core::ptr::copy_nonoverlapping(
-                buffer.add(4).cast::<u16>(),
+                buffer.add(8).cast::<u16>(),
                 core::ptr::addr_of_mut!(PROTECTED_ORIGINAL).cast::<u16>(),
                 units,
             );
         }
     }
+    PROTECTED_ORIGINAL_MODE.store(mode, Ordering::Release);
     PROTECTED_ORIGINAL_LEN.store(units, Ordering::Release);
     STATUS_SUCCESS
+}
+
+fn protected_original_mode() -> u32 {
+    PROTECTED_ORIGINAL_MODE.load(Ordering::Acquire)
 }
 
 fn caller_is_ours() -> bool {
