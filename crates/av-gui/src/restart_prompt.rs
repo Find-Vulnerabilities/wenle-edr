@@ -27,11 +27,40 @@ pub fn show(_file_name: &str) {}
 
 #[cfg(windows)]
 fn show_blocking(file_name: &str) {
-    use windows::core::{w, PCWSTR};
+    use windows::core::{s, w, BOOL, HRESULT, PCWSTR};
     use windows::Win32::Foundation::{HINSTANCE, HWND};
+    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
     use windows::Win32::UI::Controls::{
-        TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION,
+        TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION,
     };
+
+    type TaskDialogIndirectFn = unsafe extern "system" fn(
+        *const TASKDIALOGCONFIG,
+        *mut i32,
+        *mut i32,
+        *mut BOOL,
+    ) -> HRESULT;
+
+    // Resolved dynamically on purpose. A static import of `TaskDialogIndirect`
+    // makes the whole GUI fail to start with "entry point not found" on a
+    // process whose comctl32 is v5; that is the failure measured on the host
+    // after the first build, and it takes the window with it. comctl32 v6 is
+    // loaded when present, and a missing export degrades to no dialog rather
+    // than to no GUI.
+    let module = match unsafe { LoadLibraryW(w!("comctl32.dll")) } {
+        Ok(module) => module,
+        Err(error) => {
+            log::warn!("comctl32 could not be loaded for the restart prompt: {error}");
+            return;
+        }
+    };
+    let Some(proc) = (unsafe { GetProcAddress(module, s!("TaskDialogIndirect")) }) else {
+        log::warn!("comctl32 has no TaskDialogIndirect export; the restart prompt is unavailable");
+        return;
+    };
+    // SAFETY: the export is the documented `TaskDialogIndirect` entry point,
+    // and its signature is the one declared above from commctrl.h.
+    let task_dialog: TaskDialogIndirectFn = unsafe { std::mem::transmute(proc) };
 
     const RESTART_BUTTON: i32 = 100;
 
@@ -66,7 +95,7 @@ fn show_blocking(file_name: &str) {
     // at `buttons`, both of which outlive the call. The dialog owns no handle
     // we keep, and a failure is reported by the HRESULT rather than by a
     // partially-filled out-parameter.
-    let result = unsafe { TaskDialogIndirect(&config, Some(&mut clicked), None, None) };
+    let result = unsafe { task_dialog(&config, &mut clicked, std::ptr::null_mut(), std::ptr::null_mut()) };
     if result.is_err() {
         log::warn!("the restart-required task dialog could not be shown: {result:?}");
         return;
