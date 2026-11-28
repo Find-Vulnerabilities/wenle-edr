@@ -414,6 +414,7 @@ unsafe extern "system" fn control_dispatch(irp: *mut IRP) -> i32 {
     // returned zero. The raw bytes were measured on the test VM, not guessed.
     let raw = &stack as *const _ as *const u8 as *const u32;
     let output_length = unsafe { core::ptr::read_unaligned(raw.add(2)) };
+    let input_length = unsafe { core::ptr::read_unaligned(raw.add(4)) };
     let code = unsafe { core::ptr::read_unaligned(raw.add(6)) };
     let buffer = unsafe { (*irp).AssociatedIrp.SystemBuffer.cast::<u8>() };
     let mut information = 0usize;
@@ -458,6 +459,8 @@ unsafe extern "system" fn control_dispatch(irp: *mut IRP) -> i32 {
         }
         information = core::mem::size_of::<av_driver_proto::audit::DiskGuardStats>();
         status = STATUS_SUCCESS;
+    } else if code == av_driver_proto::ioctl::IOCTL_PROTECT_ORIGINAL {
+        status = unsafe { crate::set_protected_original(buffer, input_length) };
     }
     unsafe {
         (*irp).IoStatus.Anonymous.Status = status;

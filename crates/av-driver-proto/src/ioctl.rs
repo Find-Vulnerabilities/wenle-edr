@@ -205,9 +205,25 @@ pub const IOCTL_INLINE_HOOKS: u32 =
 pub const IOCTL_DISK_GUARD_STATS: u32 =
     ctl_code(FILE_DEVICE_UNKNOWN, 0x808, METHOD_BUFFERED, FILE_ANY_ACCESS);
 
+/// Protect one original that quarantine could not remove.
+///
+/// Input is a little-endian `u32` unit count followed by that many UTF-16
+/// units: the DOS path of the file. The driver stores it and refuses
+/// `IRP_MJ_CREATE` and an executable section acquire for that path, regardless
+/// of the DACL or the user's token. An empty buffer clears the slot.
+///
+/// `FILE_WRITE_DATA`: this is a protection, not a query, and the device ACL
+/// plus this access bit is what keeps an unprivileged caller from asking the
+/// driver to deny a system path.
+pub const IOCTL_PROTECT_ORIGINAL: u32 =
+    ctl_code(FILE_DEVICE_UNKNOWN, 0x809, METHOD_BUFFERED, FILE_WRITE_DATA);
+
+/// The largest path the protect-original message may carry.
+pub const PROTECTED_ORIGINAL_MAX_UNITS: usize = 1024;
+
 /// Every control code this driver answers, for a test to walk and a driver's
 /// `IRP_MJ_DEVICE_CONTROL` handler to sanity-check its own table against.
-pub const ALL_CONTROL_CODES: [u32; 9] = [
+pub const ALL_CONTROL_CODES: [u32; 10] = [
     IOCTL_QUERY_STATUS,
     IOCTL_SET_MODE,
     IOCTL_GET_STATS,
@@ -217,6 +233,7 @@ pub const ALL_CONTROL_CODES: [u32; 9] = [
     IOCTL_KERNEL_MODULES,
     IOCTL_INLINE_HOOKS,
     IOCTL_DISK_GUARD_STATS,
+    IOCTL_PROTECT_ORIGINAL,
 ];
 
 /// The protocol version. Bumped whenever a structure in [`crate::wire`] changes

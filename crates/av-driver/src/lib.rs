@@ -2060,6 +2060,11 @@ unsafe extern "system" fn create_pre_operation(
         // SAFETY: `data` is the live callback data and a create pre-operation
         // runs at PASSIVE_LEVEL, which the name query requires.
         if let Some(units) = unsafe { operation_file_dos_path(data, &mut blocked_path) } {
+            if units > 0 && is_protected_original(&blocked_path[..units]) {
+                bump(C_BLOCKED_WRITES);
+                unsafe { refuse(data, STATUS_ACCESS_DENIED) };
+                return FLT_PREOP_COMPLETE;
+            }
             if units > 0 && contains_ascii_ci(&blocked_path[..units], r"\programdata\wenleav\blocked\") {
                 bump(C_BLOCKED_WRITES);
                 unsafe { refuse(data, STATUS_ACCESS_DENIED) };
@@ -2186,6 +2191,11 @@ unsafe extern "system" fn section_pre_operation(
         // SAFETY: as in `create_pre_operation`; a section acquire is at
         // PASSIVE_LEVEL, which the name query requires.
         if let Some(units) = unsafe { operation_file_dos_path(data, &mut blocked_path) } {
+            if units > 0 && is_protected_original(&blocked_path[..units]) {
+                bump(C_BLOCKED_WRITES);
+                unsafe { refuse(data, STATUS_INSUFFICIENT_RESOURCES) };
+                return FLT_PREOP_COMPLETE;
+            }
             if units > 0 && contains_ascii_ci(&blocked_path[..units], r"\programdata\wenleav\blocked\") {
                 bump(C_BLOCKED_WRITES);
                 // A created section only accepts this status; see the arm below.
@@ -2810,6 +2820,77 @@ fn gate_matches(path: &[u16]) -> bool {
 /// it moves, and the driver refuses the write for every other image on the
 /// machine, so malware cannot silently replace the product; it can only do what
 /// our own tools could already do, which is install a different build.
+/// The original path the service could not delete, if one is protected.
+///
+/// One slot rather than a table: a quarantine failure is a single file, and
+/// the service sends the next one when it happens. The length is published
+/// after the units are copied; a zero length is the empty slot.
+static mut PROTECTED_ORIGINAL: [u16; av_driver_proto::ioctl::PROTECTED_ORIGINAL_MAX_UNITS] =
+    [0; av_driver_proto::ioctl::PROTECTED_ORIGINAL_MAX_UNITS];
+static PROTECTED_ORIGINAL_LEN: AtomicUsize = AtomicUsize::new(0);
+
+fn same_path_ci(left: &[u16], right: &[u16]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(a, b)| {
+            let a = if *a >= b'a' as u16 && *a <= b'z' as u16 {
+                *a - 32
+            } else {
+                *a
+            };
+            let b = if *b >= b'a' as u16 && *b <= b'z' as u16 {
+                *b - 32
+            } else {
+                *b
+            };
+            a == b
+        })
+}
+
+fn is_protected_original(path: &[u16]) -> bool {
+    let units = PROTECTED_ORIGINAL_LEN.load(Ordering::Acquire);
+    if units == 0 || units > av_driver_proto::ioctl::PROTECTED_ORIGINAL_MAX_UNITS {
+        return false;
+    }
+    // SAFETY: the length is published only after the units have been copied
+    // below, and the acquire load pairs with that release store.
+    let table = unsafe { &*core::ptr::addr_of!(PROTECTED_ORIGINAL) };
+    same_path_ci(&table[..units], path)
+}
+
+/// Store the original path the service asked the driver to protect.
+///
+/// # Safety
+///
+/// Called from the control device's `IRP_MJ_DEVICE_CONTROL` handler at
+/// PASSIVE_LEVEL with a `METHOD_BUFFERED` system buffer. `length` is the
+/// input-buffer length the I/O manager reported; the unit count in the buffer
+/// is validated against it before any read.
+pub(crate) unsafe fn set_protected_original(buffer: *const u8, length: u32) -> i32 {
+    if buffer.is_null() || length < 4 {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let units = unsafe { core::ptr::read_unaligned(buffer.cast::<u32>()) } as usize;
+    if units > av_driver_proto::ioctl::PROTECTED_ORIGINAL_MAX_UNITS
+        || (length as usize) < 4 + units.saturating_mul(2)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    PROTECTED_ORIGINAL_LEN.store(0, Ordering::Release);
+    if units > 0 {
+        // SAFETY: the bounds above prove the source buffer holds `units`
+        // UTF-16 units, and the destination is the static array's full width.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                buffer.add(4).cast::<u16>(),
+                core::ptr::addr_of_mut!(PROTECTED_ORIGINAL).cast::<u16>(),
+                units,
+            );
+        }
+    }
+    PROTECTED_ORIGINAL_LEN.store(units, Ordering::Release);
+    STATUS_SUCCESS
+}
+
 fn caller_is_ours() -> bool {
     // SAFETY: `IoGetCurrentProcess` takes no arguments, can be called at any
     // IRQL, and returns the `EPROCESS` of the calling thread.

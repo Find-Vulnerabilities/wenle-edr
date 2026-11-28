@@ -3074,6 +3074,17 @@ impl Host {
                     },
                 );
                 if context.remove_original && !entry.original_removed {
+                    // The vault could not delete it. Tell the driver the
+                    // original path as well as tightening the DACL: a held
+                    // handle defeats both the delete and the rename into the
+                    // blocked directory, but not a create gate keyed on the
+                    // path.
+                    if let Err(error) = crate::driver::protect_original(path) {
+                        log::warn!(
+                            "{} is still on disk and the driver could not be asked to protect it: {error}",
+                            path.display()
+                        );
+                    }
                     self.win_the_removal_race(path);
                 }
                 DetectionAction::Quarantined { id: entry.id }

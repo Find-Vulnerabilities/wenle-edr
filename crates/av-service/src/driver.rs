@@ -36,7 +36,13 @@
 use av_ipc::{DriverEvent, DriverEventAction, DriverPresence, DriverStatus, DriverSubject};
 
 /// The symbolic link the driver's control device is reached through.
-pub const CONTROL_DEVICE: &str = r"\\.\WenleAvFilter";
+///
+/// `\\.\WenleAvAudit`, not `\\.\WenleAvFilter`: the filter's name is the service
+/// name and the altitude, while the control device `control.rs` creates is
+/// `\Device\WenleAvAudit` and links it under this DOS name. The old value here
+/// opened a link that did not exist for IOCTLs, which is why a protect request
+/// could be logged as sent and never reach the driver.
+pub const CONTROL_DEVICE: &str = r"\\.\WenleAvAudit";
 
 /// Ask the operating system whether the driver is loaded.
 ///
@@ -125,6 +131,73 @@ pub fn check() -> DriverStatus {
     {
         DriverStatus::unknown("this build has no Windows driver to check for")
     }
+}
+
+/// Ask the driver to refuse every future open of one original path.
+///
+/// This is the enforcement path the blocked directory cannot provide: a file
+/// another process holds open cannot be renamed into that directory, but the
+/// driver can still be told the path it is not to open. The slot is one path;
+/// the next quarantine that needs protection replaces it.
+#[cfg(windows)]
+pub fn protect_original(path: &std::path::Path) -> Result<(), String> {
+    use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE};
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use windows::Win32::System::IO::DeviceIoControl;
+
+    let wide = crate::win32::to_wide_str(CONTROL_DEVICE);
+    // SAFETY: `wide` is NUL-terminated and outlives the call; the remaining
+    // arguments are values.
+    let handle = unsafe {
+        CreateFileW(
+            windows::core::PCWSTR(wide.as_ptr()),
+            (GENERIC_READ | GENERIC_WRITE).0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            None,
+        )
+    }
+    .map_err(|error| format!("{CONTROL_DEVICE} could not be opened: {error}"))?;
+
+    let path_units: Vec<u16> = path
+        .to_string_lossy()
+        .encode_utf16()
+        .take(av_driver_proto::ioctl::PROTECTED_ORIGINAL_MAX_UNITS)
+        .collect();
+    let mut input = Vec::with_capacity(4 + path_units.len() * 2);
+    input.extend_from_slice(&(path_units.len() as u32).to_le_bytes());
+    for unit in &path_units {
+        input.extend_from_slice(&unit.to_le_bytes());
+    }
+    let mut returned = 0u32;
+    // SAFETY: `input` is a live buffer of exactly `input.len()` bytes and the
+    // driver's `METHOD_BUFFERED` handler reads it with the length passed here.
+    let result = unsafe {
+        DeviceIoControl(
+            handle,
+            av_driver_proto::ioctl::IOCTL_PROTECT_ORIGINAL,
+            Some(input.as_ptr().cast()),
+            input.len() as u32,
+            None,
+            0,
+            Some(&mut returned),
+            None,
+        )
+    };
+    // SAFETY: the handle came from `CreateFileW` and is closed once here.
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
+    result.map_err(|error| format!("the driver refused the protect request: {error}"))
+}
+
+#[cfg(not(windows))]
+pub fn protect_original(_path: &std::path::Path) -> Result<(), String> {
+    Err("this build has no Windows driver".to_string())
 }
 
 /// Translate one driver event into the protocol's vocabulary.
