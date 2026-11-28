@@ -491,6 +491,26 @@ impl Scanner<'_> {
             return None;
         }
 
+        // Do not even open a file that is still growing. The debounce window
+        // is a quiet-period heuristic, not proof that the browser has closed
+        // its write handle: a 160 MB download can pause for a second between
+        // chunks. Two measurements with a short gap keep the scanner from
+        // reading and throwing away the first eight megabytes of a partial
+        // archive every time the watcher wakes.
+        let first = std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+        std::thread::sleep(std::time::Duration::from_millis(750));
+        let second = std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+        if first != second {
+            *retry = true;
+            log::debug!(
+                "{} grew from {} to {} bytes while settling; rescan deferred",
+                path.display(),
+                first,
+                second
+            );
+            return None;
+        }
+
         let report = self.engine.scan_file(path, self.options);
         if report
             .error
