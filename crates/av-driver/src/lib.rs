@@ -2048,6 +2048,25 @@ unsafe extern "system" fn create_pre_operation(
     // SAFETY: the callback's contract is that `data` and the parameter block it
     // points at are valid.
     let wanted = unsafe { desired_access(data) };
+    // The driver-side half of "the original is still on disk". The service
+    // moves a file it cannot delete into `\ProgramData\WenleAV\blocked\`; that
+    // directory is not readable or executable by anything except this product.
+    // The check is deliberately before every other decision: a blocked file
+    // must not be opened for a scan, a read, a write or an execution by the
+    // user, and the path is the one thing the create callback can resolve
+    // without asking the service.
+    if !caller_is_ours() {
+        let mut blocked_path = [0u16; MAX_PATH_UNITS];
+        // SAFETY: `data` is the live callback data and a create pre-operation
+        // runs at PASSIVE_LEVEL, which the name query requires.
+        if let Some(units) = unsafe { operation_file_dos_path(data, &mut blocked_path) } {
+            if units > 0 && contains_ascii_ci(&blocked_path[..units], r"\programdata\wenleav\blocked\") {
+                bump(C_BLOCKED_WRITES);
+                unsafe { refuse(data, STATUS_ACCESS_DENIED) };
+                return FLT_PREOP_COMPLETE;
+            }
+        }
+    }
     // The third and last shape of "make this product's file stop working". A
     // protected file may be read and executed; it may not be opened for
     // writing, because the open itself truncates. Measured twice: on 2026-11-04
@@ -2162,6 +2181,19 @@ unsafe extern "system" fn section_pre_operation(
     // SAFETY: `data` is the callback's own data pointer, and this callback is
     // the acquire-for-section pre-operation, so the parameter block carries the
     // arm the helper reads.
+    if !caller_is_ours() {
+        let mut blocked_path = [0u16; MAX_PATH_UNITS];
+        // SAFETY: as in `create_pre_operation`; a section acquire is at
+        // PASSIVE_LEVEL, which the name query requires.
+        if let Some(units) = unsafe { operation_file_dos_path(data, &mut blocked_path) } {
+            if units > 0 && contains_ascii_ci(&blocked_path[..units], r"\programdata\wenleav\blocked\") {
+                bump(C_BLOCKED_WRITES);
+                // A created section only accepts this status; see the arm below.
+                unsafe { refuse(data, STATUS_INSUFFICIENT_RESOURCES) };
+                return FLT_PREOP_COMPLETE;
+            }
+        }
+    }
     if !unsafe { section_is_an_execution(data) } {
         // Not a section that anything is about to run: a mapped data file, or an
         // acquire of a section that already exists. Counted as allowed for the

@@ -21,7 +21,42 @@
 //! is in `Everyone`, and the service must still be able to delete the file when
 //! the handle is released.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Move an undeletable original into the directory the driver refuses.
+///
+/// The vault already holds the bytes, and a rename on the same volume is the
+/// one user-mode operation that both keeps the data and takes the original
+/// path away. It can fail when the file is open without `FILE_SHARE_DELETE`;
+/// the caller then falls back to the deny DACL. The driver's create and section
+/// callbacks refuse this directory to everything except the product, so the
+/// file cannot be opened from Explorer, PowerShell, an archive reader or a
+/// memory-mapped image even by an administrator.
+pub fn move_to_blocked(path: &Path) -> std::io::Result<PathBuf> {
+    let base = std::env::var_os("ProgramData")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+        .join("WenleAV")
+        .join("blocked");
+    std::fs::create_dir_all(&base)?;
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "quarantined".to_string());
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let target = base.join(format!("{stamp}-{file_name}.blocked"));
+    std::fs::rename(path, &target)?;
+    if let Err(error) = lock_down(&target) {
+        log::warn!(
+            "{} was moved to the blocked directory but its DACL was not tightened: {error}",
+            target.display()
+        );
+    }
+    Ok(target)
+}
 
 /// Deny read/execute/write/delete to every interactive user group, keep SYSTEM
 /// full control, and ask the kernel to finish the deletion at the next boot.

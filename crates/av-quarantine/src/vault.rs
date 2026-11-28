@@ -676,8 +676,20 @@ impl QuarantineVault {
                         "quarantined {} but could not delete it yet: {message}",
                         original.display()
                     );
-                    self.index.queue_removal(original, id, message.clone());
-                    if let Err(lock_error) = crate::lockdown::lock_down(original) {
+                    // A same-volume rename is the strongest user-mode move
+                    // available: it keeps the bytes and removes the original
+                    // path. The driver refuses the destination directory to
+                    // every process but ours, including administrators.
+                    let blocked = crate::lockdown::move_to_blocked(original);
+                    let removal_path = blocked.as_deref().unwrap_or(original);
+                    self.index
+                        .queue_removal(removal_path, id, message.clone());
+                    if blocked.is_ok() {
+                        log::warn!(
+                            "{} was moved into the driver-blocked directory; access is denied and deletion is queued",
+                            original.display()
+                        );
+                    } else if let Err(lock_error) = crate::lockdown::lock_down(original) {
                         log::warn!(
                             "{} is still on disk and its access could not be denied: {lock_error}",
                             original.display()
