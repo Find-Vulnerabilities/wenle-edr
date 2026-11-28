@@ -1196,7 +1196,9 @@ rule realtime_marker {
                     }
                     // Another file under the tree, or a catch-up walk: not what
                     // this test is about.
-                    Ok(RealtimeEvent::Detected(_)) | Ok(RealtimeEvent::Rescanned(_)) => continue,
+                    Ok(RealtimeEvent::Detected(_))
+            | Ok(RealtimeEvent::Rescanned(_))
+            | Ok(RealtimeEvent::ScanDeferred { .. }) => continue,
                     Ok(RealtimeEvent::WatchFailed { root, error }) => {
                         panic!("the watch on {} failed: {error}", root.display())
                     }
