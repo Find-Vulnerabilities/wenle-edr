@@ -102,6 +102,26 @@ pub fn is_reportable(action: FileAction) -> bool {
     !matches!(action, FileAction::Unknown(_))
 }
 
+/// Virtual-machine disk images and the directory VMware keeps them in.
+///
+/// These are multi-gigabyte files that grow while a guest runs. A realtime
+/// watcher that scans one spends the whole scanner thread in `grew past the
+/// 8 MiB limit` retries and never reaches the browser download that arrived
+/// beside it. They are data for a hypervisor, not programs a user launched.
+pub fn is_virtual_disk(path: &Path) -> bool {
+    let text = path.to_string_lossy().to_ascii_lowercase();
+    if text.contains(r"\virtual machines\") {
+        return true;
+    }
+    matches!(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase())
+            .as_deref(),
+        Some("vmdk" | "vhd" | "vhdx" | "avhdx" | "vdi" | "qcow2" | "vmem" | "vmsn")
+    )
+}
+
 /// Directories whose contents are never watched and never scanned.
 ///
 /// # The decision

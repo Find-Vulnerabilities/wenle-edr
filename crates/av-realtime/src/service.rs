@@ -69,7 +69,7 @@ use av_scan::ScanEngine;
 
 use crate::debounce::{effective_window, Debouncer};
 use crate::error::{RealtimeError, Result};
-use crate::filter::{is_reportable, is_scan_candidate, ExclusionSet};
+use crate::filter::{is_reportable, is_scan_candidate, is_virtual_disk, ExclusionSet};
 use crate::finding::{disposition, Disposition, Finding, Phase};
 use crate::notify::{Change, FileAction};
 use crate::plan::{WatchPlan, RESCAN_FILE_LIMIT};
@@ -477,6 +477,13 @@ impl Scanner<'_> {
         retry: &mut bool,
     ) -> Option<Finding> {
         if self.exclusions.excludes(path) {
+            stats.excluded += 1;
+            return None;
+        }
+        if is_virtual_disk(path) {
+            // A VMware/VirtualBox disk image grows by gigabytes while a guest
+            // runs. It is hypervisor data, not a user program, and scanning it
+            // starves every other path in the debouncer.
             stats.excluded += 1;
             return None;
         }
