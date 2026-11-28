@@ -3768,6 +3768,15 @@ impl Host {
                 }
                 out.push(Event::StatusChanged(self.status()));
             }
+            RealtimeEvent::ScanDeferred { path, reason } => {
+                // A large download is still being written. This is not a
+                // detection and not an unreadable file: the path is back in
+                // the debounce window and will be scanned when it settles.
+                log::warn!(
+                    "{} was deferred for a later scan: {reason}",
+                    path.display()
+                );
+            }
             RealtimeEvent::WatchFailed { root, error } => {
                 // The coverage the user believes they have is now smaller than
                 // they believe. That is a status change and not a log line — and

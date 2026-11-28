@@ -97,6 +97,17 @@ pub enum RealtimeEvent {
     /// catch-up walk". The second means there was a window in which nothing was
     /// watched, and a report that merged the two would hide it.
     Rescanned(Rescan),
+    /// A file was still growing when its scan was due.
+    ///
+    /// The path has been put back into the debounce window; this event exists
+    /// so a caller can say "the download is still being written" instead of
+    /// showing six minutes of silence.
+    ScanDeferred {
+        /// The path that will be scanned again.
+        path: PathBuf,
+        /// Why the scan was put off.
+        reason: String,
+    },
     /// A root is no longer being watched.
     ///
     /// The coverage the caller believes it has is now smaller than it believes.
@@ -447,6 +458,24 @@ impl Scanner<'_> {
         action: Option<FileAction>,
         stats: &mut ServiceStats,
     ) -> Option<Finding> {
+        let mut retry = false;
+        self.file_with_status(path, action, stats, &mut retry)
+    }
+
+    /// As [`Self::file`], but reports a file that was still growing.
+    ///
+    /// A browser writing a large archive produces events while the file is
+    /// incomplete. `av-fs` refuses to scan a file that grew after its size was
+    /// measured, which is right -- a partial archive is not the file the user
+    /// will open. The realtime caller has to put that path back in the
+    /// debouncer instead of counting it as unreadable and forgetting it.
+    fn file_with_status(
+        &mut self,
+        path: &Path,
+        action: Option<FileAction>,
+        stats: &mut ServiceStats,
+        retry: &mut bool,
+    ) -> Option<Finding> {
         if self.exclusions.excludes(path) {
             stats.excluded += 1;
             return None;
@@ -463,6 +492,21 @@ impl Scanner<'_> {
         }
 
         let report = self.engine.scan_file(path, self.options);
+        if report
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("grew past"))
+        {
+            // The file was still being written. Do not count this as a
+            // completed scan or as an unreadable file: put it back in the
+            // debouncer and let it settle.
+            *retry = true;
+            log::debug!(
+                "{} was still growing during its scan; rescan deferred",
+                path.display()
+            );
+            return None;
+        }
         stats.files_scanned += 1;
 
         match disposition(report.verdict(), self.acts_on_detections) {
@@ -650,14 +694,23 @@ fn run(
             // watcher "running" with no scans ever completing. Log it and keep
             // the thread alive: one file the engine cannot handle must not
             // switch off monitoring for everything else.
-            let scanned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                scan_due(&path, &mut scanner, &mut stats, out, stop);
-            }));
-            if scanned.is_err() {
-                log::error!(
-                    "a realtime scan panicked at {}; the watcher continues",
-                    path.display()
-                );
+            let retry = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                scan_due(&path, &mut scanner, &mut stats, out, stop)
+            })) {
+                Ok(retry) => retry,
+                Err(_) => {
+                    log::error!(
+                        "a realtime scan panicked at {}; the watcher continues",
+                        path.display()
+                    );
+                    false
+                }
+            };
+            if retry {
+                // Put the path back into the trailing-edge window. A large
+                // download produces this once per partial read; the scan that
+                // finally sees a settled size is the one that counts.
+                debouncer.observe(&path, Instant::now());
             }
         }
     }
@@ -763,7 +816,7 @@ fn scan_due(
     stats: &mut ServiceStats,
     out: &Sender<RealtimeEvent>,
     stop: &AtomicBool,
-) {
+) -> bool {
     if path.is_dir() {
         let outcome = scanner.tree(path, RESCAN_FILE_LIMIT, stats, stop);
         if outcome.cancelled {
@@ -780,11 +833,19 @@ fn scan_due(
         for finding in outcome.findings {
             let _ = out.send(RealtimeEvent::Detected(finding));
         }
-        return;
+        return false;
     }
-    if let Some(finding) = scanner.file(path, None, stats) {
+    let mut retry = false;
+    if let Some(finding) = scanner.file_with_status(path, None, stats, &mut retry) {
         let _ = out.send(RealtimeEvent::Detected(finding));
     }
+    if retry {
+        let _ = out.send(RealtimeEvent::ScanDeferred {
+            path: path.to_path_buf(),
+            reason: "the file is still being written; the scan is deferred".to_string(),
+        });
+    }
+    retry
 }
 
 /// The scan options a realtime scan runs with.
