@@ -677,6 +677,17 @@ impl QuarantineVault {
                         original.display()
                     );
                     self.index.queue_removal(original, id, message.clone());
+                    if let Err(lock_error) = crate::lockdown::lock_down(original) {
+                        log::warn!(
+                            "{} is still on disk and its access could not be denied: {lock_error}",
+                            original.display()
+                        );
+                    } else {
+                        log::warn!(
+                            "{} is still on disk; access is denied to user groups and deletion is queued for the next boot",
+                            original.display()
+                        );
+                    }
                     deferred = Some(message);
                 }
             }

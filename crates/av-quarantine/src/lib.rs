@@ -87,6 +87,7 @@ pub mod hardening;
 pub mod id;
 pub mod index;
 pub mod key;
+pub mod lockdown;
 pub mod policy;
 pub mod random;
 pub mod vault;
