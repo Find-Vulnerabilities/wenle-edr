@@ -160,6 +160,7 @@ pub mod kernel_audit;
 pub mod install;
 pub mod memory;
 pub mod peer;
+pub mod persistence_guard;
 pub mod pipe;
 pub mod process_watch;
 pub mod scan;

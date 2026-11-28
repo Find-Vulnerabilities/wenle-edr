@@ -1,4 +1,4 @@
-﻿//! Native orchestrator for the patched MWEmu engine.
+//! Native orchestrator for the patched MWEmu engine.
 //!
 //! This replaces `tools/mwemu_pack/runner.py` and the PowerShell worker. The
 //! execution engine is still the product's patched `mwemu.exe` (custom APIs,
@@ -164,7 +164,10 @@ fn run_queue(engine: &Engine, seconds: Option<u64>, once: bool) {
                     .collect()
             })
             .unwrap_or_default();
-        for job in jobs.into_iter().take(5) {
+        // Drain the whole snapshot. The old five-job cap let a queue of 200
+        // take forty task runs to clear; every PE is queued now, so a cap
+        // would turn the queue into the place analysis goes to die.
+        for job in jobs.into_iter() {
             let name = job.file_name().map(PathBuf::from).unwrap_or_default();
             let Ok(body) = std::fs::read_to_string(&job) else {
                 let _ = std::fs::rename(&job, failed.join(&name));

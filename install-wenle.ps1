@@ -124,7 +124,15 @@ function Install-TestCertificate {
         $location = 'Cert:\LocalMachine\' + $store
         $existing = Get-ChildItem $location | Where-Object { $_.Thumbprint -eq $cert.Thumbprint }
         if (-not $existing) {
-            Import-Certificate -FilePath $certPath -CertStoreLocation $location | Out-Null
+            # certutil, not Import-Certificate: measured in the Windows 11
+            # guest on 2026-11-28, Import-Certificate returns E_ACCESSDENIED
+            # when SYSTEM resumes an install and the Root copy already exists,
+            # while certutil -addstore completes. The cert is a local test
+            # certificate, not a chain fetched from the network.
+            & certutil.exe -addstore -f $store $certPath | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "certutil could not add the test certificate to LocalMachine\$store"
+            }
             Write-Log "trusted test certificate in LocalMachine\$store"
         }
     }

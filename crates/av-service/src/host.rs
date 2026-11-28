@@ -2488,7 +2488,11 @@ impl Host {
                             });
                         story.map(|story| model.score(story))
                     });
-                    let hits = self.staging.observe(&record, |pid| images.get(&pid).copied());
+                    let hits = if is_product_scan(&record) {
+                        Vec::new()
+                    } else {
+                        self.staging.observe(&record, |pid| images.get(&pid).copied())
+                    };
                     for hit in hits {
                         let agreement = match model_score {
                             Some(score) if score >= 0.95 => 20,
@@ -4267,6 +4271,31 @@ pub fn detection_for_finding(finding: &av_realtime::Finding, action: DetectionAc
 /// A file whose own content is a dropper: a long run of encoded data and a
 /// decoder named beside it. An installer writes an ordinary program and runs
 /// it, so it has neither.
+/// Whether this event is the product's own command-line scanner.
+///
+/// A manual `wenle scan <file>` names a file that was just written, which is
+/// indistinguishable from a staged dropper to a detector that only sees the
+/// write and the later command line. The scanner is not the thing that ran the
+/// file; it is the thing that is trying to inspect it. Feeding this event to the
+/// staging detector made the service terminate the scanner's own file (or the
+/// scanner) and the CLI then reported `could not be read`.
+fn is_product_scan(record: &av_behaviour::Record) -> bool {
+    if record.action != av_behaviour::Action::ProcessStarted {
+        return false;
+    }
+    let Some(path) = record.path.as_deref() else {
+        return false;
+    };
+    if !path.to_ascii_lowercase().ends_with(r"\wenle.exe") {
+        return false;
+    }
+    record
+        .command_line
+        .as_deref()
+        .map(|line| line.to_ascii_lowercase().contains("scan"))
+        .unwrap_or(false)
+}
+
 fn staged_dropper_content(path: &std::path::Path) -> bool {
     let Ok(bytes) = std::fs::read(path) else {
         return false;

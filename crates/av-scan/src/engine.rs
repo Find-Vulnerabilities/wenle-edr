@@ -957,26 +957,14 @@ impl ScanEngine {
             error,
             archive: archive.map(|walk| walk.summary),
         };
-        // Nothing cached and nothing decided: queue it so the next scan of
-        // these bytes has an opinion to read. A suspicious verdict always
-        // qualifies. So does an unsigned executable in a place a user writes:
-        // MEMZ scores 0.0111 on the static model and reaches only 0.5 in the
-        // sandbox, and the sandbox was never asked because the static band
-        // never reached suspicious. The run is cheap once the maps are
-        // preloaded, and this is first sight only, so it is a second opinion
-        // and not a walk of the disk.
-        let unsigned_user_file = kind == FileKind::Pe
-            && !trust.is_trusted()
-            && crate::sandbox::is_user_writable(path);
-        // A file the rules already convict needs no second opinion, and
-        // queueing it would run an emulation whose answer cannot change a
-        // verdict that has already acted.
-        let undecided = matches!(
-            report.verdict(),
-            Verdict::Clean | Verdict::Unknown | Verdict::Suspicious
-        );
-        let worth_a_run =
-            undecided && (report.verdict() == Verdict::Suspicious || unsigned_user_file);
+        // Every PE gets a CPU-emulation opinion, not only the files that
+        // already reached the suspicious band. A packer can hide its imports
+        // and keep its static score below the red line (Themida does); the
+        // sandbox is the only place the unpacked API calls become visible.
+        // The job is keyed by SHA-256, so a file is queued once per content.
+        // Queueing is asynchronous: this scan returns its static verdict and
+        // the next scan of the same bytes reads the sandbox answer.
+        let worth_a_run = kind == FileKind::Pe;
         if worth_a_run && !crate::sandbox::has_result(report.digests.sha256.as_deref()) {
             crate::sandbox::enqueue(&report.path, report.digests.sha256.as_deref());
         }

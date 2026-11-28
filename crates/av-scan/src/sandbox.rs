@@ -1,4 +1,4 @@
-﻿//! The sandbox's cached opinion, read where every scan can see it.
+//! The sandbox's cached opinion, read where every scan can see it.
 //!
 //! # Why this is a cache and not a call
 //!
@@ -108,14 +108,8 @@ pub fn has_result(sha256: Option<&str>) -> bool {
     result.exists() && answer_is_current(&result)
 }
 
-/// A queue deeper than this is a disk leak, not a second opinion: the worker
-/// clears up to five jobs every five minutes, so two hundred pending runs is
-/// already far more than one pass can drain.
-const QUEUE_LIMIT: usize = 200;
-
 /// Whether a path is somewhere a user, rather than the operating system or an
-/// installer, puts executables. Used to decide which unsigned files are worth
-/// a sandbox run without a static verdict first.
+/// installer, puts executables.
 pub fn is_user_writable(path: &Path) -> bool {
     let text = path.to_string_lossy().to_ascii_lowercase();
     if text.contains("\\windows\\") || text.contains("\\program files") {
@@ -138,17 +132,6 @@ pub fn enqueue(path: &Path, sha256: Option<&str>) {
     }
     let queue = root().join("queue");
     let _ = std::fs::create_dir_all(&queue);
-    let pending = std::fs::read_dir(&queue)
-        .map(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "job"))
-                .count()
-        })
-        .unwrap_or(0);
-    if pending >= QUEUE_LIMIT {
-        return;
-    }
     let job = queue.join(format!("{sha256}.job"));
     if !job.exists() {
         let body = format!("{}\n{}\n", path.display(), sha256);
@@ -191,6 +174,38 @@ fn report(text: &str, assessment: &mut Assessment) {
         })
         .unwrap_or_default();
     if score <= 0.0 && families.is_empty() {
+        // A packed PE that consumes the whole emulation budget while making
+        // almost no API calls did not "run clean": the packer kept the real
+        // code from ever becoming visible. That is evidence in its own right,
+        // and it is the case a static import table cannot show. Requiring the
+        // static packer indicators keeps this narrow: a large but ordinary
+        // installer that is merely slow does not carry them.
+        let timed_out = value
+            .get("mwemu")
+            .and_then(|mwemu| mwemu.get("timed_out"))
+            .and_then(|timed_out| timed_out.as_bool())
+            .unwrap_or(false);
+        let api_events = value
+            .get("mwemu")
+            .and_then(|mwemu| mwemu.get("api_events"))
+            .and_then(|api_events| api_events.as_u64())
+            .unwrap_or(u64::MAX);
+        let packed = assessment
+            .detections
+            .iter()
+            .any(|detection| detection.rule_id.starts_with("heuristic/packed/"));
+        if timed_out && packed && api_events <= 8 {
+            assessment.push(Detection::new(
+                "sandbox/emulation-timeout",
+                format!(
+                    "The CPU emulator timed out after making only {api_events} API call(s) \
+                     on a statically packed PE. The packer kept the real code from running, \
+                     which is anti-emulation or an unpacking loop, not a clean sample."
+                ),
+                Severity::High,
+                DetectionSource::Heuristic,
+            ));
+        }
         return;
     }
     let unpacked = value

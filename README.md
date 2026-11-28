@@ -121,9 +121,11 @@ reported and not blocked, because the product's middle band warns and never acts
 ## The sandbox
 
 The service does not wait for an emulation: its decisions have a 250 ms
-deadline. A scan that lands in the suspicious band writes a job file into
-`%ProgramData%\WenleAV\sandbox\queue\` and returns at once. The
-`WenleSandboxWorker` task (at startup and every five minutes, as SYSTEM) runs:
+deadline. Every scan of a PE writes a job file into
+`%ProgramData%\WenleAV\sandbox\queue\`, whatever the static verdict is, and
+returns at once. A job is keyed by SHA-256 and a current result is not queued
+again. The `WenleSandboxWorker` task (at startup and every five minutes, as
+SYSTEM) drains the whole queue and runs:
 
 ```
 sandbox\bin\wenle-mwemu.exe --once

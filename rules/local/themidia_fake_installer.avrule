@@ -1,0 +1,24 @@
+/*
+ * Large Themida-protected PE installers.
+ *
+ * This is deliberately a packer rule, not a hash: the sample family changes
+ * its payload and its name, but the Themida section set and the large
+ * installer image are stable. Legitimate Themida software can match this;
+ * the rule is for the fake-installer family and is marked high so a scan
+ * acts on it. If that false-positive trade is too wide, lower severity and
+ * keep only the sandbox/emulation-timeout rule.
+ */
+
+rule packed_themidia_fake_installer {
+    meta:
+        description = "A large PE carrying the Themida section set, used by fake installers."
+        severity = "high"
+        category = "packer"
+        family = "Themida.FakeInstaller"
+    strings:
+        $themida = ".themida" ascii
+        $taggant = ".taggant" ascii
+        $boot = ".boot" ascii
+    condition:
+        filesize > 50MB and $themida and $taggant and $boot
+}

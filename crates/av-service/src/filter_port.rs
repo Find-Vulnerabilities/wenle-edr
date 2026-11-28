@@ -553,6 +553,29 @@ pub const fn verdict_to_decision(verdict: Verdict) -> Decision {
     }
 }
 
+fn is_executable_file(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase())
+            .as_deref(),
+        Some("exe" | "dll" | "sys" | "scr" | "cpl" | "ocx" | "efi" | "com")
+    )
+}
+
+fn is_user_writable_path(path: &Path) -> bool {
+    let text = path.to_string_lossy().to_ascii_lowercase();
+    // Deliberately narrower than "under C:\Users": AppData holds signed
+    // components (OneDrive's FileSyncClient.dll was the measured false
+    // positive), and a large signed component is not the download shape this
+    // gate is for. Downloads, the desktop, temp and public are where a browser
+    // and a user put a new executable before running it.
+    text.contains(r"\downloads\")
+        || text.contains(r"\desktop\")
+        || text.contains(r"\temp\")
+        || text.contains(r"\users\public\")
+}
+
 /// Which of the driver's two gates asked about a path.
 ///
 /// The driver sends no field that names its callback. What it does send is
@@ -1366,6 +1389,27 @@ impl Dispatcher {
         // by any full scan.
         const GATE_SCAN_LIMIT: u64 = 8 * 1024 * 1024;
         if let Ok(metadata) = std::fs::metadata(&path) {
+            if metadata.is_file()
+                && metadata.len() > GATE_SCAN_LIMIT
+                && refusing_gate(request.subject)
+                && is_executable_file(&path)
+                && is_user_writable_path(&path)
+            {
+                // A large unsigned PE in a user-writable directory cannot be
+                // read to the end inside the driver's gate deadline. Letting it
+                // run because the scan is slow is the bypass the 61 MB Themida
+                // installer used: the file was written to Downloads, then
+                // launched before the service could finish. Refuse at the image
+                // gate instead. Program Files and Windows are not covered by
+                // this branch, so the common large signed application is not
+                // stopped by a file-size accident.
+                log::warn!(
+                    "{} is {} bytes in a user-writable directory; blocked at the image gate because it cannot be scanned inside the deadline",
+                    path.display(),
+                    metadata.len()
+                );
+                return (Decision::Block, None);
+            }
             if metadata.is_file() && metadata.len() > GATE_SCAN_LIMIT {
                 // Deliberately *not* remembered. Nothing inspected these bytes,
                 // and an entry would turn "we skipped it" into "we cleared it"

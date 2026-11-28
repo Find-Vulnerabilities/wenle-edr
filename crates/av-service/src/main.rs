@@ -309,6 +309,7 @@ fn run_service() -> Result<u8, ServiceError> {
     }
     sweep_set_aside(&paths);
     spawn_automatic_rule_update(&paths);
+    let _persistence_guard = av_service::persistence_guard::start();
 
     match scm::run(paths, loaded) {
         Ok(()) => Ok(EXIT_OK),
@@ -442,6 +443,7 @@ fn run_console() -> Result<u8, ServiceError> {
         Err(detail) => log::debug!("this service's registration could not be read back: {detail}"),
     }
     sweep_set_aside(&paths);
+    let _persistence_guard = av_service::persistence_guard::start();
 
     let host = av_service::host::Host::open(paths, loaded)?;
     log::info!("running in the foreground; Ctrl-C ends the process");
