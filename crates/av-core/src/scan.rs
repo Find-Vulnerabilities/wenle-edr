@@ -274,9 +274,15 @@ impl ScanOptions {
     pub fn watcher() -> Self {
         Self {
             archives: true,
-            archive_depth: 2,
-            archive_max_expansion: 64 * 1024 * 1024,
-            per_file_timeout: Some(Duration::from_secs(15)),
+            archive_depth: 3,
+            // These are deliberately larger than the gate profile. A watcher
+            // has no program waiting behind it, and a 168 MB archive that is
+            // only examined as its first 8 MiB is a clean verdict about bytes
+            // that were never read. The cost is paid on the watcher thread,
+            // after the download has closed, not in the browser's write path.
+            max_file_size: Some(256 * 1024 * 1024),
+            archive_max_expansion: 1024 * 1024 * 1024,
+            per_file_timeout: Some(Duration::from_secs(120)),
             hash_whole_file: false,
             ..Self::realtime()
         }

@@ -1094,18 +1094,18 @@ mod tests {
         // written cheap enough to run on a user's machine.
         let options = scan_options();
         assert!(options.archives);
-        assert_eq!(options.archive_depth, 2);
-        assert_eq!(options.archive_max_expansion, 64 * 1024 * 1024);
+        assert_eq!(options.archive_depth, 3);
+        assert_eq!(options.archive_max_expansion, 1024 * 1024 * 1024);
         assert!(!options.heuristics);
         assert!(!options.recursive);
         assert!(!options.memory);
         // And the per-file budget is bounded, so one slow file cannot hold the
-        // single scanner thread for an unbounded time. Two seconds and eight
-        // megabytes, since 2026-11-12: five seconds and thirty-two megabytes let
-        // a single large image hold the thread past the driver's own deadline
-        // while the gate waited for a verdict (see `ScanOptions::realtime`).
-        assert_eq!(options.per_file_timeout, Some(Duration::from_secs(15)));
-        assert_eq!(options.max_file_size, Some(8 * 1024 * 1024));
+        // A watcher has no program waiting behind it, but it still needs a
+        // bound: 120 s covers a 168 MB archive (measured at 73 s), and 256 MiB
+        // is the size above which we would be promising a verdict about bytes
+        // we did not read. The gate keeps its own much tighter profile.
+        assert_eq!(options.per_file_timeout, Some(Duration::from_secs(120)));
+        assert_eq!(options.max_file_size, Some(256 * 1024 * 1024));
     }
 
     #[test]
