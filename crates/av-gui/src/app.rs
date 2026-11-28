@@ -313,6 +313,9 @@ pub struct GuiApp {
     /// put the same block in the corner twice, which is how a user learns to
     /// ignore the corner.
     announced: BTreeSet<QuarantineId>,
+    /// Paths that already have a restart-required dialog open, or have had one
+    /// dismissed, so a re-read of the index does not stack dialogs.
+    restart_prompted: BTreeSet<PathBuf>,
     /// When to look at the index again, and whether it moved.
     vault_poll: crate::vault_poll::VaultPoll,
     /// The notifications this process posts to the desktop.
@@ -395,6 +398,7 @@ impl GuiApp {
             vault_view: VaultView::default(),
             vault_selected: None,
             announced: BTreeSet::new(),
+            restart_prompted: BTreeSet::new(),
             vault_poll: crate::vault_poll::VaultPoll::new(),
             notifier,
             tab: Tab::Scan,
@@ -956,6 +960,16 @@ impl GuiApp {
             "Blocked and quarantined",
             text,
         ));
+        if !entry.original_removed
+            && entry.original_path.is_file()
+            && self.restart_prompted.insert(entry.original_path.clone())
+        {
+            // The bytes are in the vault but the file is still at the path the
+            // user can open. A toast cannot carry a button here; the task
+            // dialog can, and restarting is the one action that reliably
+            // releases the handle keeping it alive.
+            crate::restart_prompt::show(&entry.file_name);
+        }
     }
 
     /// Re-read the vault if another process has written to it since the last
@@ -1062,6 +1076,9 @@ impl GuiApp {
         // report, it is a second fact about the same block, and a tag would
         // make it replace the block's own notification rather than join it.
         self.announce(Announcement::new("Still on disk", text));
+        if path.is_file() && self.restart_prompted.insert(path.to_path_buf()) {
+            crate::restart_prompt::show(&short_name(path));
+        }
     }
 
     /// Take everything the vault has said since the last frame, announcing

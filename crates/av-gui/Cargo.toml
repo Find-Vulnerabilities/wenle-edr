@@ -138,6 +138,11 @@ windows = { version = "0.62", features = [
     # exist without it. See `tray.rs`.
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
+    # `TaskDialogIndirect`, the native dialog with a custom Restart button.
+    # A toast cannot carry one: a toast button needs a COM activator this
+    # product does not register (see notify.rs). The task dialog also stays
+    # modal and topmost, which is what "the threat is still here" needs.
+    "Win32_UI_Controls",
     "Win32_System_LibraryLoader",
     "Win32_Graphics_Gdi",
     # The notification. Not a `Win32_` namespace, because a toast is not a

@@ -60,6 +60,7 @@ mod icons;
 // a module is somewhere to write that down; see its documentation.
 mod notify;
 mod picker;
+mod restart_prompt;
 mod scan;
 // The control pipe, as a caller. Its own module because the window is a client
 // of the service and not a second service: a restore or a delete *about* an
